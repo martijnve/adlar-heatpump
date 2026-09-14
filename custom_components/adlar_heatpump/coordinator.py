@@ -38,6 +38,10 @@ def _to_signed(value: int) -> int:
     return ctypes.c_int16(value).value
 
 
+class ModbusUnavailable(Exception):
+    """Gateway niet bereikbaar - hele pollcyclus overslaan."""
+
+
 class AdlarCoordinator(DataUpdateCoordinator):
 
     def __init__(self, hass, host, port, slave, scan_interval):
@@ -63,7 +67,11 @@ class AdlarCoordinator(DataUpdateCoordinator):
                 except Exception:
                     pass
             self._client = ModbusTcpClient(host=self.host, port=self.port, timeout=10)
-            self._client.connect()
+            if not self._client.connect():
+                self._client = None
+                raise ModbusUnavailable(
+                    f"geen verbinding met {self.host}:{self.port}"
+                )
         return self._client
 
     def _read_one(self, address: int) -> int | None:
@@ -73,8 +81,8 @@ class AdlarCoordinator(DataUpdateCoordinator):
         identical to jsmodbus. Register 0x0040 = address 0x0040.
         """
         time.sleep(REQUEST_DELAY)
+        client = self._get_client()
         try:
-            client = self._get_client()
             result = client.read_holding_registers(
                 address=address, count=1, device_id=self.slave
             )
@@ -83,7 +91,7 @@ class AdlarCoordinator(DataUpdateCoordinator):
                 return None
             return result.registers[0]
         except Exception as err:
-            _LOGGER.warning("Exception reading 0x%04X: %s — reconnecting", address, err)
+            _LOGGER.debug("Leesfout op 0x%04X: %s", address, err)
             self._client = None
             return None
 
