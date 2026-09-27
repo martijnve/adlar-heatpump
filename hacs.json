@@ -1,8 +1,5 @@
 {
   "name": "Adlar Heatpump (Aurora II)",
-  "domain": "adlar_heatpump",
-  "documentation": "https://github.com/martijnve/adlar-heatpump",
-  "issue_tracker": "https://github.com/martijnve/adlar-heatpump/issues",
   "render_readme": true,
   "homeassistant": "2024.11.0"
 }
