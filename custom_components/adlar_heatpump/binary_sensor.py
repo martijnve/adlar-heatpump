@@ -16,6 +16,7 @@ from .entity import AdlarEntity
 from .registers import (
     BITMASKS,
     COMPRESSORS_REGISTER,
+    NON_FAULT_BITS,
     STATUS1_NAMES,
     SYSTEM1_FAULT_REGISTERS,
     SYSTEM2_OFFSET,
@@ -66,7 +67,8 @@ class AdlarBitSensor(AdlarEntity, BinarySensorEntity):
             self._attr_entity_category = EntityCategory.DIAGNOSTIC
             self._attr_entity_registry_enabled_default = False
         elif addr not in STATUS_REGISTERS:
-            self._attr_device_class = BinarySensorDeviceClass.PROBLEM
+            if (addr, mask) not in NON_FAULT_BITS:
+                self._attr_device_class = BinarySensorDeviceClass.PROBLEM
             self._attr_entity_category = EntityCategory.DIAGNOSTIC
         elif addr == 0x0000 and mask == 0x0008:
             self._attr_device_class = BinarySensorDeviceClass.PROBLEM

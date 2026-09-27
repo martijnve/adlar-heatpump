@@ -14,8 +14,6 @@ from .const import CONF_EXPERT_MODE, DOMAIN
 from .coordinator import AdlarCoordinator
 from .entity import AdlarEntity, AdlarRegisterEntity
 from .registers import (
-    CONTROL,
-    PARAM,
     REFRIGERANT_REGISTER,
     REFRIGERANT_TYPES,
     REGISTERS,
@@ -50,10 +48,9 @@ async def async_setup_entry(
     coordinator: AdlarCoordinator = hass.data[DOMAIN][entry.entry_id]
     expert = entry.options.get(CONF_EXPERT_MODE, False)
 
+    # Every register that isn't writable in the current mode is a sensor
     entities: list[SensorEntity] = [
-        AdlarSensor(coordinator, reg)
-        for reg in REGISTERS
-        if reg.group != CONTROL and not (reg.group == PARAM and is_writable(reg, expert))
+        AdlarSensor(coordinator, reg) for reg in REGISTERS if not is_writable(reg, expert)
     ]
     entities.append(AdlarThermalPowerSensor(coordinator))
     entities.append(AdlarCOPSensor(coordinator))
@@ -71,18 +68,23 @@ class AdlarSensor(AdlarRegisterEntity, SensorEntity):
         unit = HA_UNIT.get(reg.unit, reg.unit)
         if reg.options is not None:
             self._attr_device_class = SensorDeviceClass.ENUM
-            self._attr_options = list(reg.options.values())
         elif reg.addr in VERSION_REGISTERS:
             pass
         else:
             self._attr_native_unit_of_measurement = unit
-            self._attr_device_class = DEVICE_CLASS_BY_UNIT.get(unit)
+            # A temperature difference must not be converted like an absolute temperature
+            if not reg.delta:
+                self._attr_device_class = DEVICE_CLASS_BY_UNIT.get(unit)
             if reg.unit == "kWh":
-                # TOTAL so HA treats a drop (counter reset) as a reset, not an error
-                self._attr_state_class = SensorStateClass.TOTAL
+                # A drop of the counter (controller reset, 16-bit wrap) starts a new cycle
+                self._attr_state_class = SensorStateClass.TOTAL_INCREASING
                 self._attr_icon = "mdi:counter"
             elif reg.group == SENSOR:
                 self._attr_state_class = SensorStateClass.MEASUREMENT
+
+    @property
+    def options(self) -> list[str] | None:
+        return self._option_labels() if self._reg.options is not None else None
 
     @property
     def native_value(self):
@@ -90,7 +92,7 @@ class AdlarSensor(AdlarRegisterEntity, SensorEntity):
         if value is None:
             return None
         if self._reg.options is not None:
-            return self._reg.options.get(value)
+            return self._option_label()
         if self._reg.addr in VERSION_REGISTERS:
             return f"{value // 100}.{value // 10 % 10}.{value % 10}"
         return value

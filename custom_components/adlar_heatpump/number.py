@@ -31,7 +31,7 @@ class AdlarNumber(AdlarRegisterEntity, NumberEntity):
     def __init__(self, coordinator: AdlarCoordinator, reg: R) -> None:
         super().__init__(coordinator, reg, f"num_{reg.addr:04X}")
         self._attr_native_unit_of_measurement = {"days": "d"}.get(reg.unit, reg.unit)
-        if reg.unit == "°C":
+        if reg.unit == "°C" and not reg.delta:
             self._attr_device_class = NumberDeviceClass.TEMPERATURE
         self._attr_native_min_value = reg.min
         self._attr_native_max_value = reg.max

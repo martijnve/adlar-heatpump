@@ -4,7 +4,9 @@ Transcribed from the HHI Modbus developer reference v2.2
 (hhi/org.hhi.adlar-heatpump-modbus, docs/Dev support/adlar-modbus-developer-reference-v2.2.md),
 which is generated from lib/modbus/adlar-modbus-registers.ts.
 
-Left out on purpose: service-only forcing registers (0x0331-0x0345 except the DC pump pair),
+Left out on purpose: the 0x0330 Unit Control bitmask (FC06 twin of the command coils, including
+drain, refrigerant recovery and factory reset; its safe bits are exposed as coils), the
+service-only forcing registers (0x0331-0x0345 except the DC pump pair),
 the dangerous command coils (drain, refrigerant recovery, factory reset, forced control),
 the legacy curve pair 0x030C/0x030D (protocol < 130) and undocumented addresses.
 """
@@ -45,6 +47,8 @@ class R:
     signed: bool = True
     enabled: bool = True          # entity enabled by default
     protected: bool = False       # never writable, not even in expert mode
+    expert: bool = False          # CONTROL register writable only in expert mode
+    delta: bool = False           # °C difference/offset, not an absolute temperature
 
     @property
     def fast(self) -> bool:
@@ -112,7 +116,7 @@ REGISTERS: list[R] = [
     R(0x0103, 'P03 Water flow switch', PARAM, min=0, max=1, options={0: 'enable', 1: 'disable'}),
     R(0x0104, 'P04 Thermal overload protection', PARAM, min=0, max=1, options={0: 'enable', 1: 'disable'}),
     R(0x0105, 'P05 Linkage switch (host)', PARAM, min=0, max=3, options={0: 'enable', 1: 'disable', 2: 'thermostatic', 3: 'heating thermostat'}),
-    R(0x0106, 'P06 Fan type', PARAM, min=0, max=2, options={0: 'AC', 1: 'DC', 2: 'EC'}),
+    R(0x0106, 'P06 Fan type', PARAM, min=0, max=3, options={0: 'AC', 1: 'DC', 2: 'EC', 3: '3 (undocumented)'}),
     R(0x0107, 'P07 High voltage lock', PARAM, min=0, max=1, options={0: '3 locks', 1: 'no lock'}),
     R(0x0108, 'P08 Low voltage lock', PARAM, min=0, max=1, options={0: '3 locks', 1: 'no lock'}),
     R(0x0109, 'P09 Exhaust lock', PARAM, min=0, max=1, options={0: '3 locks', 1: 'no lock'}),
@@ -129,33 +133,33 @@ REGISTERS: list[R] = [
     R(0x0114, 'P20 Heating fan speed-up value', PARAM, unit='°C', min=0, max=60),
     R(0x0115, 'P21 Low temp unit prohibit start', PARAM, unit='°C', min=-40, max=-10),
     R(0x0116, 'P22 E-heating start ambient', PARAM, unit='°C', min=-15, max=40),
-    R(0x0117, 'P23 Excessive temp diff alarm', PARAM, unit='°C', min=10, max=30),
-    R(0x0118, 'P24 Return water compensation', PARAM, unit='°C', min=-10, max=10),
-    R(0x0119, 'P25 Outlet water compensation', PARAM, unit='°C', min=-10, max=10),
-    R(0x011A, 'P26 H&C Hysteresis return differential value', PARAM, unit='°C', min=0, max=10),
-    R(0x011B, 'P27 Floor heating return differential value', PARAM, unit='°C', min=0, max=10),
+    R(0x0117, 'P23 Excessive temp diff alarm', PARAM, unit='°C', min=10, max=30, delta=True),
+    R(0x0118, 'P24 Return water compensation', PARAM, unit='°C', min=-10, max=10, delta=True),
+    R(0x0119, 'P25 Outlet water compensation', PARAM, unit='°C', min=-10, max=10, delta=True),
+    R(0x011A, 'P26 H&C Hysteresis return differential value', PARAM, unit='°C', min=0, max=10, delta=True),
+    R(0x011B, 'P27 Floor heating return differential value', PARAM, unit='°C', min=0, max=10, delta=True),
     R(0x011C, 'P28 Pump mode at shutdown', PARAM, min=0, max=4, options={0: 'keep running', 1: 'stop', 2: 'cooling only', 3: 'AC/heating only', 4: 'floor only'}),
     R(0x011D, 'P29 Antifreeze pump running time', PARAM, unit='min', min=0, max=10),
     R(0x011E, 'P30 Defrost mode', PARAM, min=0, max=3, options={0: 'smart', 1: 'timing', 2: 'fast', 3: 'dew point'}),
     R(0x011F, 'P31 Defrost accumulated threshold', PARAM, min=0, max=120),
     R(0x0120, 'P32 Defrost entry coil temp', PARAM, unit='°C', min=-30, max=0),
-    R(0x0121, 'P33 Defrost entry temp diff 1', PARAM, unit='°C', min=0, max=20),
-    R(0x0122, 'P34 Defrost entry temp diff 2', PARAM, unit='°C', min=0, max=20),
+    R(0x0121, 'P33 Defrost entry temp diff 1', PARAM, unit='°C', min=0, max=20, delta=True),
+    R(0x0122, 'P34 Defrost entry temp diff 2', PARAM, unit='°C', min=0, max=20, delta=True),
     R(0x0123, 'P35 Max defrost time', PARAM, unit='min', min=0, max=30),
     R(0x0124, 'P36 Defrost exit coil temp', PARAM, unit='°C', min=0, max=30),
     R(0x0125, 'P37 Shutdown mode (aka "Darwin")', PARAM, min=0, max=2, options={0: 'Smart (unit decides)', 1: 'Direct/Darwin (immediate off at target)', 2: 'Refrig Smart'}),
     R(0x0126, 'P38 Heating main valve initial opening constant', PARAM, min=-999, max=999),
     R(0x0127, 'P39 Pressure sensor settings', PARAM, min=0, max=1, options={0: 'enable', 1: 'disable'}),
-    R(0x0128, 'P40 EEV cooling target superheat correction', PARAM, unit='°C', min=-5, max=10),
-    R(0x0129, 'P41 EEV heating HP freq limit correction', PARAM, unit='°C', min=-10, max=10),
-    R(0x012A, 'P42 EEV heating target superheat correction', PARAM, unit='°C', min=-5, max=10),
+    R(0x0128, 'P40 EEV cooling target superheat correction', PARAM, unit='°C', min=-5, max=10, delta=True),
+    R(0x0129, 'P41 EEV heating HP freq limit correction', PARAM, unit='°C', min=-10, max=10, delta=True),
+    R(0x012A, 'P42 EEV heating target superheat correction', PARAM, unit='°C', min=-5, max=10, delta=True),
     R(0x012B, 'P43 MV switch setting', PARAM, min=0, max=1, options={0: 'disable', 1: 'enable'}),
     R(0x012C, 'P44 Water flow switch failure detect', PARAM, min=0, max=1, options={0: 'enable', 1: 'disable'}),
     R(0x012D, 'P45 Modbus slave address', PARAM, min=1, max=16, protected=True),
-    R(0x012E, 'P46 EVI liquid injection valve return diff', PARAM, unit='°C', min=0, max=15),
+    R(0x012E, 'P46 EVI liquid injection valve return diff', PARAM, unit='°C', min=0, max=15, delta=True),
     R(0x012F, 'P47 EVI target superheat constant', PARAM, min=0, max=12),
     R(0x0130, 'P48 Enable DHW tank temp sensor', PARAM, min=0, max=1, options={0: 'disable', 1: 'enable'}),
-    R(0x0131, 'P49 Hot water freq running percentage', PARAM, unit='%', min=30, max=100),
+    R(0x0131, 'P49 Hot water freq running percentage', PARAM, unit='%', min=0, max=100),  # doc range excludes the reference unit's value (§3)
     R(0x0132, 'P50 Cooling target freq constant A', PARAM, min=-100, max=100),
     R(0x0133, 'P51 Cooling min freq', PARAM, unit='Hz', min=15, max=60),
     R(0x0134, 'P52 Cooling target freq upper', PARAM, unit='Hz', min=40, max=120),
@@ -164,13 +168,13 @@ REGISTERS: list[R] = [
     R(0x0137, 'P55 Heating target freq upper', PARAM, unit='Hz', min=50, max=120),
     R(0x0138, 'P56 Heating target freq lower', PARAM, unit='Hz', min=20, max=120),
     R(0x0139, 'P57 Heating min freq (ambient > 0°C)', PARAM, unit='Hz', min=15, max=60),
-    R(0x013A, 'P58 Heating min freq (-10°C  ambient < 0°C)', PARAM, unit='Hz', min=15, max=60),
+    R(0x013A, 'P58 Heating min freq (-10°C ≤ ambient < 0°C)', PARAM, unit='Hz', min=15, max=60),
     R(0x013B, 'P59 Heating min freq (ambient < -10°C)', PARAM, unit='Hz', min=15, max=60),
     R(0x013C, 'P60 Hot water target freq constant', PARAM, min=-100, max=100),
     R(0x013D, 'P61 Hot water target freq upper', PARAM, unit='Hz', min=50, max=120),
     R(0x013E, 'P62 Hot water target freq lower', PARAM, unit='Hz', min=15, max=120),
     R(0x013F, 'P63 Hot water min freq (ambient > 0°C)', PARAM, unit='Hz', min=15, max=60),
-    R(0x0140, 'P64 Hot water min freq (-10°C  ambient < 0°C)', PARAM, unit='Hz', min=15, max=60),
+    R(0x0140, 'P64 Hot water min freq (-10°C ≤ ambient < 0°C)', PARAM, unit='Hz', min=15, max=60),
     R(0x0141, 'P65 Hot water min freq (ambient < -10°C)', PARAM, unit='Hz', min=15, max=60),
     R(0x0142, 'P66 DC fan initial freq', PARAM, unit='Hz', min=20, max=60),
     R(0x0143, 'P67 DC fan heating min freq', PARAM, unit='Hz', min=20, max=60),
@@ -189,7 +193,7 @@ REGISTERS: list[R] = [
     R(0x0150, 'P80 EEV main valve initial opening coeff a', PARAM, min=-999, max=999),
     R(0x0151, 'P81 EEV main valve initial opening coeff b', PARAM, min=-999, max=999),
     R(0x0152, 'P82 EEV aux valve max opening', PARAM, unit='P', min=100, max=500),
-    R(0x0153, 'P83 EEV aux valve min opening', PARAM, unit='P', min=50, max=300),
+    R(0x0153, 'P83 EEV aux valve min opening', PARAM, unit='P', min=30, max=300),  # doc range excludes the reference unit's value (§3)
     R(0x0154, 'P84 EEV main valve regulation period', PARAM, unit='s', min=10, max=120),
     R(0x0155, 'P85 EEV aux valve initial opening const c', PARAM, min=-200, max=900),
     R(0x0156, 'P86 EEV aux valve initial opening coeff a', PARAM, min=-999, max=999),
@@ -198,14 +202,14 @@ REGISTERS: list[R] = [
     R(0x0159, 'P89 Silent mode fan freq', PARAM, unit='Hz', min=20, max=60),
     R(0x015A, 'P90 EVI entry ambient temperature', PARAM, unit='°C', min=0, max=45),
     R(0x015B, 'P91 EVI forbid entry time', PARAM, unit='min', min=0, max=30),
-    R(0x015C, 'P92 EVI entry temperature difference', PARAM, unit='°C', min=0, max=60),
+    R(0x015C, 'P92 EVI entry temperature difference', PARAM, unit='°C', min=0, max=60, delta=True),
     R(0x015D, 'P93 EVI compressor run time to enter', PARAM, unit='min', min=0, max=20),
     R(0x015E, 'P94 EVI aux valve adjustment cycle', PARAM, unit='s', min=10, max=120),
     R(0x015F, 'P95 Network pump mode', PARAM, min=0, max=1, options={0: 'shared', 1: 'independent'}),
-    R(0x0160, 'P96 DHW differential value', PARAM, unit='°C', min=0, max=10),
+    R(0x0160, 'P96 DHW differential value', PARAM, unit='°C', min=0, max=10, delta=True),
     R(0x0161, 'P97 Tank temperature auto compensation', PARAM, min=0, max=1, options={0: 'enable', 1: 'disable'}),
-    R(0x0162, 'P98 Tank temperature manual compensation', PARAM, unit='°C', min=-10, max=10),
-    R(0x0163, 'P99 Pump speed regulation temp diff', PARAM, unit='°C', min=2, max=10),
+    R(0x0162, 'P98 Tank temperature manual compensation', PARAM, unit='°C', min=-10, max=10, delta=True),
+    R(0x0163, 'P99 Pump speed regulation temp diff', PARAM, unit='°C', min=2, max=10, delta=True),
     R(0x0164, 'P100 PWM pump minimum speed', PARAM, unit='%', min=20, max=80),
     R(0x0165, 'P101 Pump control mode', PARAM, min=0, max=1, options={0: 'AC(on/off)', 1: 'DC(PWM)'}),
     R(0x0166, 'P102 Four-way valve control mode', PARAM, min=0, max=1, options={0: 'cooling power on', 1: 'heating power on'}),
@@ -241,7 +245,7 @@ REGISTERS: list[R] = [
     R(0x0184, 'P132 Cooling freq shield zone 3 high', PARAM, unit='Hz', min=0, max=120),
     R(0x0185, 'P133 Fan module', PARAM, min=0, max=1, options={0: 'integral module', 1: 'individual module'}),
     R(0x0186, 'P134 Low water flow protection', PARAM, unit='L/min', min=0, max=100),
-    R(0x0187, 'P135 Anti-condensation start temp diff', PARAM, unit='°C', min=0, max=50),
+    R(0x0187, 'P135 Anti-condensation start temp diff', PARAM, unit='°C', min=0, max=50, delta=True),
     R(0x0188, 'P136 Throttle bypass valve open ambient temp', PARAM, unit='°C', min=-20, max=50),
     R(0x0189, 'P137 Throttle bypass delay compressor', PARAM, unit='s', min=0, max=999),
     R(0x018A, 'P138 Defrost compressor frequency', PARAM, unit='Hz', min=40, max=120),
@@ -251,19 +255,19 @@ REGISTERS: list[R] = [
     R(0x018E, 'P142 Dew point defrost constant', PARAM, min=0, max=60),
     R(0x018F, 'P143 Water temp to enter defrost', PARAM, unit='°C', min=0, max=60),
     R(0x0190, 'P144 Ambient temp to enter defrost', PARAM, unit='°C', min=-20, max=30),
-    R(0x0191, 'P145 Outlet water antifreeze protection', PARAM, unit='°C', min=-20, max=10),
+    R(0x0191, 'P145 Outlet water antifreeze protection', PARAM, unit='°C', min=-30, max=10),  # doc range excludes the reference unit's value (§3)
     R(0x0192, 'P146 Pump PWM range setting', PARAM, unit='L/min', min=0, max=100),
     R(0x0193, 'P147 Cooling antifreeze mode', PARAM, min=0, max=2, options={0: 'low pressure', 1: 'temp', 2: 'low pressure + temp'}),
     R(0x0194, 'P148 Cooling antifreeze temperature', PARAM, unit='°C', min=-30, max=10),
     R(0x0195, 'P149 Outlet water high limit temperature', PARAM, unit='°C', min=40, max=80),
     R(0x0196, 'P150 Secondary heating pump select', PARAM, min=0, max=3, options={0: 'power on run', 1: 'power on', 2: 'linkage demand switch', 3: 'temperature control'}),
-    R(0x0197, 'P151 Return diff - hot water heat source', PARAM, unit='°C', min=0, max=40),
-    R(0x0198, 'P152 Return diff - heating heat source', PARAM, unit='°C', min=0, max=40),
+    R(0x0197, 'P151 Return diff - hot water heat source', PARAM, unit='°C', min=0, max=40, delta=True),
+    R(0x0198, 'P152 Return diff - heating heat source', PARAM, unit='°C', min=0, max=40, delta=True),
     R(0x0199, 'P153 DHW heat source upper temp', PARAM, unit='°C', min=15, max=80),
     R(0x019A, 'P154 Heating heat source upper temp', PARAM, unit='°C', min=15, max=80),
     R(0x019B, 'P155 Compressor code (reserved)', PARAM, min=0, max=9999, protected=True),
     R(0x019C, 'P156 Aux EEV selection', PARAM, min=0, max=1, options={0: 'enable', 1: 'disable'}),
-    R(0x019D, 'P157 Aux EEV temp diff to reduce', PARAM, unit='°C', min=0, max=99),
+    R(0x019D, 'P157 Aux EEV temp diff to reduce', PARAM, unit='°C', min=0, max=99, delta=True),
     R(0x019E, 'P158 Heating limit water temp start ambient', PARAM, unit='°C', min=-45, max=30),
     R(0x019F, 'P159 Limit temperature constant', PARAM, min=0, max=150),
     R(0x01A0, 'P160 Limit temperature coefficient', PARAM, min=-500, max=500),
@@ -271,9 +275,9 @@ REGISTERS: list[R] = [
     R(0x01A2, 'P162 Antifreeze DHW pipe interval', PARAM, unit='min', min=0, max=360),
     R(0x01A3, 'P163 Min pump speed feedback', PARAM, unit='%', min=0, max=70),
     R(0x01A4, 'P164 Energy level control', PARAM, min=0, max=3, options={0: 'all enable', 1: 'E-heat disable', 2: 'compressor disable', 3: 'all disable'}),
-    R(0x01A5, 'P165 Load shedding return difference', PARAM, unit='°C', min=1, max=15),
-    R(0x01A6, 'P166 Load shedding hysteresis', PARAM, unit='°C', min=1, max=15),
-    R(0x01A7, 'P167 Load shedding emergency stop return diff', PARAM, unit='°C', min=1, max=15),
+    R(0x01A5, 'P165 Load shedding return difference', PARAM, unit='°C', min=1, max=15, delta=True),
+    R(0x01A6, 'P166 Load shedding hysteresis', PARAM, unit='°C', min=1, max=15, delta=True),
+    R(0x01A7, 'P167 Load shedding emergency stop return diff', PARAM, unit='°C', min=1, max=15, delta=True),
     R(0x01A8, 'P168 Load shedding hot water start ratio', PARAM, unit='%', min=1, max=100),
     R(0x01A9, 'P169 Load shedding non-hot water start ratio', PARAM, unit='%', min=1, max=100),
     R(0x01AA, 'P170 Load shedding loading cycle', PARAM, unit='min', min=3, max=60),
@@ -310,16 +314,16 @@ REGISTERS: list[R] = [
     R(0x01C9, 'P201 Working cond 55B fan frequency', PARAM, unit='Hz', min=0, max=60),
     R(0x01CA, 'P202 Working cond 55A fan frequency', PARAM, unit='Hz', min=0, max=60),
     R(0x01CB, 'P203 Working cond 55E fan frequency', PARAM, unit='Hz', min=0, max=60),
-    R(0x01CC, 'P204 Working cond 35D main valve superheat', PARAM, unit='°C', min=-10, max=10),
-    R(0x01CD, 'P205 Working cond 35C main valve superheat', PARAM, unit='°C', min=-10, max=10),
-    R(0x01CE, 'P206 Working cond 35B main valve superheat', PARAM, unit='°C', min=-10, max=10),
-    R(0x01CF, 'P207 Working cond 35A main valve superheat', PARAM, unit='°C', min=-10, max=10),
-    R(0x01D0, 'P208 Working cond 35E main valve superheat', PARAM, unit='°C', min=-10, max=10),
-    R(0x01D1, 'P209 Working cond 55D main valve superheat', PARAM, unit='°C', min=-10, max=10),
-    R(0x01D2, 'P210 Working cond 55C main valve superheat', PARAM, unit='°C', min=-10, max=10),
-    R(0x01D3, 'P211 Working cond 55B main valve superheat', PARAM, unit='°C', min=-10, max=10),
-    R(0x01D4, 'P212 Working cond 55A main valve superheat', PARAM, unit='°C', min=-10, max=10),
-    R(0x01D5, 'P213 Working cond 55E main valve superheat', PARAM, unit='°C', min=-10, max=10),
+    R(0x01CC, 'P204 Working cond 35D main valve superheat', PARAM, unit='°C', min=-10, max=10, delta=True),
+    R(0x01CD, 'P205 Working cond 35C main valve superheat', PARAM, unit='°C', min=-10, max=10, delta=True),
+    R(0x01CE, 'P206 Working cond 35B main valve superheat', PARAM, unit='°C', min=-10, max=10, delta=True),
+    R(0x01CF, 'P207 Working cond 35A main valve superheat', PARAM, unit='°C', min=-10, max=10, delta=True),
+    R(0x01D0, 'P208 Working cond 35E main valve superheat', PARAM, unit='°C', min=-10, max=10, delta=True),
+    R(0x01D1, 'P209 Working cond 55D main valve superheat', PARAM, unit='°C', min=-10, max=10, delta=True),
+    R(0x01D2, 'P210 Working cond 55C main valve superheat', PARAM, unit='°C', min=-10, max=10, delta=True),
+    R(0x01D3, 'P211 Working cond 55B main valve superheat', PARAM, unit='°C', min=-10, max=10, delta=True),
+    R(0x01D4, 'P212 Working cond 55A main valve superheat', PARAM, unit='°C', min=-10, max=10, delta=True),
+    R(0x01D5, 'P213 Working cond 55E main valve superheat', PARAM, unit='°C', min=-10, max=10, delta=True),
     R(0x01D6, 'P214 Working cond 35D main valve opening', PARAM, unit='P', min=0, max=500),
     R(0x01D7, 'P215 Working cond 35C main valve opening', PARAM, unit='P', min=0, max=500),
     R(0x01D8, 'P216 Working cond 35B main valve opening', PARAM, unit='P', min=0, max=500),
@@ -330,16 +334,16 @@ REGISTERS: list[R] = [
     R(0x01DD, 'P221 Working cond 55B main valve opening', PARAM, unit='P', min=0, max=500),
     R(0x01DE, 'P222 Working cond 55A main valve opening', PARAM, unit='P', min=0, max=500),
     R(0x01DF, 'P223 Working cond 55E main valve opening', PARAM, unit='P', min=0, max=500),
-    R(0x01E0, 'P224 Working cond 35D aux valve superheat', PARAM, unit='°C', min=-10, max=10),
-    R(0x01E1, 'P225 Working cond 35C aux valve superheat', PARAM, unit='°C', min=-10, max=10),
-    R(0x01E2, 'P226 Working cond 35B aux valve superheat', PARAM, unit='°C', min=-10, max=10),
-    R(0x01E3, 'P227 Working cond 35A aux valve superheat', PARAM, unit='°C', min=-10, max=10),
-    R(0x01E4, 'P228 Working cond 35E aux valve superheat', PARAM, unit='°C', min=-10, max=10),
-    R(0x01E5, 'P229 Working cond 55D aux valve superheat', PARAM, unit='°C', min=-10, max=10),
-    R(0x01E6, 'P230 Working cond 55C aux valve superheat', PARAM, unit='°C', min=-10, max=10),
-    R(0x01E7, 'P231 Working cond 55B aux valve superheat', PARAM, unit='°C', min=-10, max=10),
-    R(0x01E8, 'P232 Working cond 55A aux valve superheat', PARAM, unit='°C', min=-10, max=10),
-    R(0x01E9, 'P233 Working cond 55E aux valve superheat', PARAM, unit='°C', min=-10, max=10),
+    R(0x01E0, 'P224 Working cond 35D aux valve superheat', PARAM, unit='°C', min=-10, max=10, delta=True),
+    R(0x01E1, 'P225 Working cond 35C aux valve superheat', PARAM, unit='°C', min=-10, max=10, delta=True),
+    R(0x01E2, 'P226 Working cond 35B aux valve superheat', PARAM, unit='°C', min=-10, max=10, delta=True),
+    R(0x01E3, 'P227 Working cond 35A aux valve superheat', PARAM, unit='°C', min=-10, max=10, delta=True),
+    R(0x01E4, 'P228 Working cond 35E aux valve superheat', PARAM, unit='°C', min=-10, max=10, delta=True),
+    R(0x01E5, 'P229 Working cond 55D aux valve superheat', PARAM, unit='°C', min=-10, max=10, delta=True),
+    R(0x01E6, 'P230 Working cond 55C aux valve superheat', PARAM, unit='°C', min=-10, max=10, delta=True),
+    R(0x01E7, 'P231 Working cond 55B aux valve superheat', PARAM, unit='°C', min=-10, max=10, delta=True),
+    R(0x01E8, 'P232 Working cond 55A aux valve superheat', PARAM, unit='°C', min=-10, max=10, delta=True),
+    R(0x01E9, 'P233 Working cond 55E aux valve superheat', PARAM, unit='°C', min=-10, max=10, delta=True),
     R(0x01EA, 'P234 Working cond 35D aux valve opening', PARAM, unit='P', min=0, max=500),
     R(0x01EB, 'P235 Working cond 35C aux valve opening', PARAM, unit='P', min=0, max=500),
     R(0x01EC, 'P236 Working cond 35B aux valve opening', PARAM, unit='P', min=0, max=500),
@@ -356,9 +360,9 @@ REGISTERS: list[R] = [
     R(0x01F7, 'P247 Working cond 35 rated main valve opening', PARAM, unit='P', min=0, max=500),
     R(0x01F8, 'P248 Working cond 55 rated fan frequency', PARAM, unit='Hz', min=0, max=60),
     R(0x01F9, 'P249 Working cond 55 rated main valve opening', PARAM, unit='P', min=0, max=500),
-    R(0x01FA, 'P250 Working cond 35 rated main valve superheat', PARAM, unit='°C', min=-10, max=10),
+    R(0x01FA, 'P250 Working cond 35 rated main valve superheat', PARAM, unit='°C', min=-10, max=10, delta=True),
     R(0x01FB, 'P251 Working cond PFC shutdown current', PARAM, unit='A', min=0, max=50),
-    R(0x01FC, 'P252 Working cond 55 rated main valve superheat', PARAM, unit='°C', min=-10, max=10),
+    R(0x01FC, 'P252 Working cond 55 rated main valve superheat', PARAM, unit='°C', min=-10, max=10, delta=True),
     R(0x01FD, 'P253 Working cond PFC turn-on current', PARAM, unit='A', min=0, max=50),
     R(0x01FE, 'P254 Heating medium', PARAM, min=0, max=1, options={0: 'water', 1: 'antifreeze liquid'}),
     R(0x01FF, 'P255 Smart Grid enable', PARAM, min=0, max=1, options={0: 'enable', 1: 'disable'}),
@@ -388,8 +392,10 @@ REGISTERS: list[R] = [
     R(0x0316, "Underfloor Heating Setting Curve", CONTROL, options=CURVE_OPTIONS),
     R(0x0317, "Zone 2 Temp Set", CONTROL, unit="°C", temp=True, min=7, max=60, enabled=False),
     R(0x0319, "Zone 1 Temp Set", CONTROL, unit="°C", temp=True, min=7, max=60, enabled=False),
-    R(0x0343, "DC Pump Control", CONTROL, options={0: "Auto", 1: "Manual"}, enabled=False),
-    R(0x0344, "DC Pump Output", CONTROL, unit="%", min=0, max=100, enabled=False),
+    # Manual pump control can stop the water flow while the compressor runs: expert mode only,
+    # and the output never below the 20 % floor of P100 (pump minimum speed)
+    R(0x0343, "DC Pump Control", CONTROL, options={0: "Auto", 1: "Manual"}, enabled=False, expert=True),
+    R(0x0344, "DC Pump Output", CONTROL, unit="%", min=20, max=100, enabled=False, expert=True),
     # --- Version info ---
     R(0x0360, "Program Version", VERSION),
     R(0x0361, "Product Type", VERSION, options={
@@ -406,11 +412,11 @@ REGISTERS: list[R] = [
     R(0x0806, 'L17 Water level control', PARAM, min=0, max=2, options={0: 'Off', 1: 'Hi/Lo switch', 2: 'Hi/Hi/Lo switch'}),
     R(0x0807, 'L18 Hydration control', PARAM, min=0, max=1, options={0: 'level only', 1: 'temp + level'}),
     R(0x0808, 'L19 Allow water temperature', PARAM, unit='°C', min=0, max=99),
-    R(0x0809, 'L20 Hysteresis replenishment water', PARAM, unit='°C', min=0, max=20),
+    R(0x0809, 'L20 Hysteresis replenishment water', PARAM, unit='°C', min=0, max=20, delta=True),
     R(0x080A, 'L21 Low water cut-off operation', PARAM, min=0, max=2, options={0: 'no start', 1: 'on but no start', 2: 'start'}),
     R(0x080B, 'L22 DHW return water setting', PARAM, min=0, max=3, options={0: 'disable', 1: 'continuous return', 2: 'cycle return', 3: 'temperature diff return'}),
     R(0x080C, 'L23 Return water temp setting', PARAM, unit='°C', min=20, max=65),
-    R(0x080D, 'L24 Return water temp differential', PARAM, unit='°C', min=1, max=15),
+    R(0x080D, 'L24 Return water temp differential', PARAM, unit='°C', min=1, max=15, delta=True),
     R(0x080E, 'L25 Return water interval period', PARAM, unit='min', min=3, max=90),
     R(0x080F, 'L26 Return water running period', PARAM, unit='min', min=1, max=30),
     R(0x0810, 'L27 Heating low temp curve DIY', PARAM, min=0, max=1, options={0: 'enable DIY curve', 1: 'disable'}),
@@ -620,6 +626,9 @@ BITMASKS: dict[int, tuple[str, dict[int, str]]] = {
 SYSTEM2_OFFSET = 5
 SYSTEM1_FAULT_REGISTERS = range(0x0005, 0x000A)
 
+# Bits in the fault registers that report a state rather than a fault
+NON_FAULT_BITS = {(0x0008, 0x0080)}  # EEPROM refresh complete
+
 # Bits of 0x0000 keep the entity names upstream gave them
 STATUS1_NAMES = {
     0x0001: "Running Status: Refrigerant Recovery",
@@ -680,11 +689,12 @@ def calibrate_ac_current(value: float) -> float:
 
 
 def is_writable(reg: R, expert: bool) -> bool:
-    """CONTROL registers always, PARAM registers only in expert mode and only with known bounds."""
+    """CONTROL registers (expert-flagged ones in expert mode), PARAM registers only in expert
+    mode and only with known bounds."""
     if reg.protected:
         return False
     if reg.group == CONTROL:
-        return True
+        return expert or not reg.expert
     if reg.group == PARAM and expert:
         return reg.options is not None or (reg.min is not None and reg.max is not None)
     return False

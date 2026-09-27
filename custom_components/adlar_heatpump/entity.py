@@ -6,7 +6,7 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DEVICE_NAME, DOMAIN
 from .coordinator import AdlarCoordinator
-from .registers import CONTROL, LIMIT, PARAM, SENSOR, VERSION, R
+from .registers import LIMIT, PARAM, VERSION, R
 
 
 class AdlarEntity(CoordinatorEntity[AdlarCoordinator]):
@@ -34,11 +34,11 @@ class AdlarRegisterEntity(AdlarEntity):
         self._reg = reg
         self._attr_name = reg.name
         self._attr_entity_registry_enabled_default = reg.enabled and reg.group != PARAM
-        if reg.group in (LIMIT, VERSION) or (reg.group == PARAM and not self._writable):
-            self._attr_entity_category = EntityCategory.DIAGNOSTIC
-        elif reg.group == PARAM or (reg.group == CONTROL and not reg.enabled):
+        secondary = reg.group in (PARAM, LIMIT, VERSION) or not reg.enabled
+        if secondary and self._writable:
             self._attr_entity_category = EntityCategory.CONFIG
-        elif reg.group == SENSOR and not reg.enabled:
+        elif secondary:
+            # Home Assistant doesn't allow the config category on read-only platforms
             self._attr_entity_category = EntityCategory.DIAGNOSTIC
 
     _writable = False
@@ -46,3 +46,25 @@ class AdlarRegisterEntity(AdlarEntity):
     @property
     def _raw_value(self):
         return self.coordinator.data.get(self._reg.addr)
+
+    def _option_labels(self) -> list[str]:
+        """Option labels, plus one for a value the register map doesn't know.
+
+        Home Assistant drops a state that isn't in the options, so the unknown value
+        gets a label of its own instead of showing as unknown.
+        """
+        labels = list(self._reg.options.values())
+        raw = self._raw_value
+        if raw is not None and raw not in self._reg.options:
+            labels.append(unknown_label(raw))
+        return labels
+
+    def _option_label(self) -> str | None:
+        raw = self._raw_value
+        if raw is None:
+            return None
+        return self._reg.options.get(raw, unknown_label(raw))
+
+
+def unknown_label(raw: int) -> str:
+    return f"Unknown ({raw})"

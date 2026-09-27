@@ -5,7 +5,7 @@ from collections import Counter
 
 import pytest
 from homeassistant.core import HomeAssistant
-from homeassistant.exceptions import HomeAssistantError
+from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 from homeassistant.helpers import entity_registry as er
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
@@ -70,8 +70,8 @@ async def test_entity_counts_default(hass, fake_client):
     # 153 status bits; single compressor so no System 2 mirrors
     assert counts["binary_sensor"] == 153
     assert counts["switch"] == 7
-    assert counts["select"] == 7            # mode, running mode, 4 curves, DC pump control
-    assert counts["number"] == 8            # 4 setpoints, indoor, 2 zones, DC pump output
+    assert counts["select"] == 6            # mode, running mode, 4 curves
+    assert counts["number"] == 7            # 4 setpoints, indoor, 2 zones
     assert counts["climate"] == 1
     assert counts["sensor"] > 300           # all P/L parameters read-only
 
@@ -205,3 +205,54 @@ async def test_state_right_after_write(hass, fake_client):
     await hass.services.async_call("climate", "turn_off", {"entity_id": _climate_id(hass)}, blocking=True)
     await hass.services.async_call("climate", "turn_on", {"entity_id": _climate_id(hass)}, blocking=True)
     assert hass.states.get(_climate_id(hass)).state == "heat"
+
+
+async def test_expert_toggle_keeps_user_settings(hass, fake_client):
+    entry = await _setup(hass)
+    registry = er.async_get(hass)
+    sensor_id = registry.async_get_entity_id("sensor", DOMAIN, f"{ENTRY_ID}_010B")
+    registry.async_update_entity(sensor_id, disabled_by=None, name="HP protect")
+    await hass.async_block_till_done()
+
+    hass.config_entries.async_update_entry(entry, options={CONF_EXPERT_MODE: True})
+    await hass.async_block_till_done()
+    number = registry.async_get(registry.async_get_entity_id("number", DOMAIN, f"{ENTRY_ID}_num_010B"))
+    assert number.entity_id == "number." + sensor_id.split(".", 1)[1]
+    assert number.disabled_by is None and number.name == "HP protect"
+
+    hass.config_entries.async_update_entry(entry, options={CONF_EXPERT_MODE: False})
+    await hass.async_block_till_done()
+    sensor = registry.async_get(registry.async_get_entity_id("sensor", DOMAIN, f"{ENTRY_ID}_010B"))
+    assert sensor.entity_id == sensor_id
+    assert sensor.disabled_by is None and sensor.name == "HP protect"
+
+
+async def test_unknown_option_value_is_shown(hass, fake_client):
+    await _setup(hass)
+    await _set_mode(hass, fake_client, 6)
+    registry = er.async_get(hass)
+    select_id = registry.async_get_entity_id("select", DOMAIN, f"{ENTRY_ID}_sel_0304")
+    state = hass.states.get(select_id)
+    assert state.state == "Unknown (6)"
+    assert "Unknown (6)" in state.attributes["options"]
+    with pytest.raises(ServiceValidationError):
+        await hass.services.async_call(
+            "select", "select_option", {"entity_id": select_id, "option": "Unknown (6)"}, blocking=True
+        )
+
+
+async def test_delta_parameter_is_not_a_temperature(hass, fake_client):
+    await _setup(hass, {CONF_EXPERT_MODE: True})
+    registry = er.async_get(hass)
+    number_id = registry.async_get_entity_id("number", DOMAIN, f"{ENTRY_ID}_num_011A")
+    registry.async_update_entity(number_id, disabled_by=None)
+    assert registry.async_get(number_id).original_device_class is None
+    heating_id = registry.async_get_entity_id("number", DOMAIN, f"{ENTRY_ID}_num_0301")
+    assert registry.async_get(heating_id).original_device_class == "temperature"
+
+
+async def test_dc_pump_needs_expert_mode(hass, fake_client):
+    await _setup(hass)
+    registry = er.async_get(hass)
+    assert registry.async_get_entity_id("sensor", DOMAIN, f"{ENTRY_ID}_0344")
+    assert not registry.async_get_entity_id("number", DOMAIN, f"{ENTRY_ID}_num_0344")

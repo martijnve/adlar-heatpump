@@ -17,7 +17,7 @@ from .const import (
     DOMAIN,
 )
 from .coordinator import AdlarCoordinator
-from .registers import PARAM, REGISTERS, is_writable
+from .registers import REGISTERS, is_writable
 
 PLATFORMS = [Platform.SENSOR, Platform.BINARY_SENSOR, Platform.NUMBER, Platform.SWITCH, Platform.SELECT, Platform.CLIMATE]
 
@@ -37,7 +37,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     await coordinator.async_config_entry_first_refresh()
 
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = coordinator
-    _remove_switched_param_entities(hass, entry)
+    _migrate_switched_entities(hass, entry)
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     entry.async_on_unload(entry.add_update_listener(_async_reload_entry))
     return True
@@ -55,22 +55,40 @@ async def _async_reload_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
     await hass.config_entries.async_reload(entry.entry_id)
 
 
-def _remove_switched_param_entities(hass: HomeAssistant, entry: ConfigEntry) -> None:
-    """Drop the registry entries of P/L parameters that moved platform with expert mode.
+def _migrate_switched_entities(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Move registry entries of registers that change platform with expert mode.
 
-    A parameter is a sensor when read-only and a number/select when writable; the unused
-    one would otherwise linger as an orphaned, unavailable entity.
+    A register is a sensor when read-only and a number/select when writable. The entry of
+    the platform no longer used is replaced by one for the new platform that keeps the
+    user's settings (enabled/hidden, name, icon, area, entity_id object id).
     """
     expert = entry.options.get(CONF_EXPERT_MODE, False)
     registry = er.async_get(hass)
     prefix = entry.entry_id
     for reg in REGISTERS:
-        if reg.group != PARAM or not is_writable(reg, True):
+        if is_writable(reg, True) == is_writable(reg, False):
             continue
-        if is_writable(reg, expert):
-            stale = [("sensor", f"{prefix}_{reg.addr:04X}")]
-        else:
-            stale = [("number", f"{prefix}_num_{reg.addr:04X}"), ("select", f"{prefix}_sel_{reg.addr:04X}")]
-        for domain, unique_id in stale:
-            if entity_id := registry.async_get_entity_id(domain, DOMAIN, unique_id):
-                registry.async_remove(entity_id)
+        sensor = ("sensor", f"{prefix}_{reg.addr:04X}")
+        writable = ("select", f"{prefix}_sel_{reg.addr:04X}") if reg.options is not None \
+            else ("number", f"{prefix}_num_{reg.addr:04X}")
+        old, new = (sensor, writable) if is_writable(reg, expert) else (writable, sensor)
+        old_id = registry.async_get_entity_id(old[0], DOMAIN, old[1])
+        if old_id is None:
+            continue
+        old_entry = registry.async_get(old_id)
+        registry.async_remove(old_id)
+        if registry.async_get_entity_id(new[0], DOMAIN, new[1]):
+            continue
+        new_entry = registry.async_get_or_create(
+            new[0], DOMAIN, new[1],
+            config_entry=entry,
+            suggested_object_id=old_id.split(".", 1)[1],
+            disabled_by=old_entry.disabled_by,
+            hidden_by=old_entry.hidden_by,
+        )
+        registry.async_update_entity(
+            new_entry.entity_id,
+            name=old_entry.name,
+            icon=old_entry.icon,
+            area_id=old_entry.area_id,
+        )

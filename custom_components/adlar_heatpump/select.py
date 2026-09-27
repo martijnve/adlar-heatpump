@@ -4,6 +4,7 @@ from __future__ import annotations
 from homeassistant.components.select import SelectEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import ServiceValidationError
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import CONF_EXPERT_MODE, DOMAIN
@@ -30,12 +31,16 @@ class AdlarSelect(AdlarRegisterEntity, SelectEntity):
     def __init__(self, coordinator: AdlarCoordinator, reg: R) -> None:
         super().__init__(coordinator, reg, f"sel_{reg.addr:04X}")
         self._values = {label: value for value, label in reg.options.items()}
-        self._attr_options = list(self._values)
+
+    @property
+    def options(self) -> list[str]:
+        return self._option_labels()
 
     @property
     def current_option(self) -> str | None:
-        raw = self._raw_value
-        return None if raw is None else self._reg.options.get(raw, f"Unknown ({raw})")
+        return self._option_label()
 
     async def async_select_option(self, option: str) -> None:
+        if option not in self._values:
+            raise ServiceValidationError(f"{option} can't be written to {self._reg.name}")
         await self.coordinator.async_write_value(self._reg, self._values[option])
