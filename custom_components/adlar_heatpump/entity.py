@@ -6,7 +6,7 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DEVICE_NAME, DOMAIN
 from .coordinator import AdlarCoordinator
-from .registers import LIMIT, PARAM, VERSION, R
+from .registers import LIMIT, VERSION, R, is_param
 
 
 class AdlarEntity(CoordinatorEntity[AdlarCoordinator]):
@@ -33,13 +33,9 @@ class AdlarRegisterEntity(AdlarEntity):
         super().__init__(coordinator, unique_suffix)
         self._reg = reg
         self._attr_name = reg.name
-        # Expert-mode entities are what the user turned expert mode on for: enabled.
-        # Read-only parameters are disabled.
-        if self._writable and (reg.group == PARAM or reg.expert):
-            self._attr_entity_registry_enabled_default = True
-        else:
-            self._attr_entity_registry_enabled_default = reg.enabled and reg.group != PARAM
-        secondary = reg.group in (PARAM, LIMIT, VERSION) or not reg.enabled
+        # An installer parameter exists only because the user chose to show it: enabled
+        self._attr_entity_registry_enabled_default = reg.enabled or is_param(reg)
+        secondary = is_param(reg) or reg.group in (LIMIT, VERSION) or not reg.enabled
         if secondary and self._writable:
             self._attr_entity_category = EntityCategory.CONFIG
         elif secondary:

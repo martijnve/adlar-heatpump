@@ -12,7 +12,12 @@ from custom_components.adlar_heatpump.coordinator import (
     ModbusUnavailable,
     plan_blocks,
 )
-from custom_components.adlar_heatpump.registers import BY_ADDR, REGISTERS
+from custom_components.adlar_heatpump.registers import (
+    BY_ADDR,
+    REGISTERS,
+    is_param,
+    param_key,
+)
 
 from .conftest import FakeModbusClient
 
@@ -21,7 +26,9 @@ from .conftest import FakeModbusClient
 def coordinator(hass, fake_client):
     entry = MockConfigEntry(domain=DOMAIN, data={"host": "192.0.2.1"})
     entry.add_to_hass(hass)
-    return AdlarCoordinator(hass, entry, "192.0.2.1", 502, 1, 60, 600)
+    # Every installer parameter shown, so the decode tests see them all
+    params = {param_key(r): "read_only" for r in REGISTERS if is_param(r)}
+    return AdlarCoordinator(hass, entry, "192.0.2.1", 502, 1, 60, 600, params)
 
 
 def _client() -> FakeModbusClient:

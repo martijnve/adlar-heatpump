@@ -19,7 +19,7 @@ from itertools import pairwise
 SENSOR = "sensor"     # read-only measurements, polled every scan
 LIMIT = "limit"       # read-only derived limits, slow poll
 CONTROL = "control"   # user controls, writable, polled every scan
-PARAM = "param"       # P/L installer parameters, slow poll, writable only in expert mode
+PARAM = "param"       # P/L installer parameters, slow poll; shown per the user's choice
 VERSION = "version"   # firmware/product info, slow poll
 
 FAST_GROUPS = (SENSOR, CONTROL)
@@ -46,8 +46,8 @@ class R:
     options: dict[int, str] | None = None
     signed: bool = True
     enabled: bool = True          # entity enabled by default
-    protected: bool = False       # never writable, not even in expert mode
-    expert: bool = False          # CONTROL register writable only in expert mode
+    protected: bool = False       # never editable, only hidden or read-only
+    installer: bool = False       # CONTROL register handled like an installer parameter
     delta: bool = False           # °C difference/offset, not an absolute temperature
 
     @property
@@ -392,10 +392,10 @@ REGISTERS: list[R] = [
     R(0x0316, "Underfloor Heating Setting Curve", CONTROL, options=CURVE_OPTIONS),
     R(0x0317, "Zone 2 Temp Set", CONTROL, unit="°C", temp=True, min=7, max=60, enabled=False),
     R(0x0319, "Zone 1 Temp Set", CONTROL, unit="°C", temp=True, min=7, max=60, enabled=False),
-    # Manual pump control can stop the water flow while the compressor runs: expert mode only,
-    # and the output never below the 20 % floor of P100 (pump minimum speed)
-    R(0x0343, "DC Pump Control", CONTROL, options={0: "Auto", 1: "Manual"}, enabled=False, expert=True),
-    R(0x0344, "DC Pump Output", CONTROL, unit="%", min=20, max=100, enabled=False, expert=True),
+    # Manual pump control can stop the water flow while the compressor runs: handled like an
+    # installer parameter (hidden unless chosen), output never below P100's 20 % floor
+    R(0x0343, "DC Pump Control", CONTROL, options={0: "Auto", 1: "Manual"}, installer=True),
+    R(0x0344, "DC Pump Output", CONTROL, unit="%", min=20, max=100, installer=True),
     # --- Version info ---
     R(0x0360, "Program Version", VERSION),
     R(0x0361, "Product Type", VERSION, options={
@@ -688,13 +688,47 @@ def calibrate_ac_current(value: float) -> float:
     return value - (curve[-1][0] - curve[-1][1])
 
 
-def is_writable(reg: R, expert: bool) -> bool:
-    """CONTROL registers (expert-flagged ones in expert mode), PARAM registers only in expert
-    mode and only with known bounds."""
-    if reg.protected:
-        return False
-    if reg.group == CONTROL:
-        return expert or not reg.expert
-    if reg.group == PARAM and expert:
-        return reg.options is not None or (reg.min is not None and reg.max is not None)
-    return False
+# How the user shows an installer parameter (options flow); hidden ones aren't polled
+HIDDEN = "hidden"
+READ_ONLY = "read_only"
+EDITABLE = "editable"
+PARAM_MODES = (HIDDEN, READ_ONLY, EDITABLE)
+
+# Always read, whatever the user chose: P119 sets the temperature scale, P114 the
+# number of compressors (System 2 fault sensors)
+ALWAYS_POLLED = {REFRIGERANT_REGISTER, COMPRESSORS_REGISTER}
+
+
+def is_param(reg: R) -> bool:
+    """Installer parameter: shown hidden, read-only or editable as the user chooses."""
+    return reg.group == PARAM or reg.installer
+
+
+def can_edit(reg: R) -> bool:
+    """Whether a parameter may be offered as editable: not protected and with known bounds."""
+    return not reg.protected and (
+        reg.options is not None or (reg.min is not None and reg.max is not None)
+    )
+
+
+def param_key(reg: R) -> str:
+    return f"{reg.addr:04X}"
+
+
+def param_mode(reg: R, params: dict[str, str]) -> str:
+    """The user's choice for a parameter (hidden when not chosen); editable only if allowed."""
+    mode = params.get(param_key(reg), HIDDEN)
+    if mode == EDITABLE and not can_edit(reg):
+        return READ_ONLY
+    return mode
+
+
+def is_shown(reg: R, params: dict[str, str]) -> bool:
+    return not is_param(reg) or param_mode(reg, params) != HIDDEN
+
+
+def is_writable(reg: R, params: dict[str, str]) -> bool:
+    """User controls always; installer parameters when the user made them editable."""
+    if is_param(reg):
+        return param_mode(reg, params) == EDITABLE
+    return reg.group == CONTROL and not reg.protected

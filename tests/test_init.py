@@ -9,7 +9,7 @@ from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 from homeassistant.helpers import entity_registry as er
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
-from custom_components.adlar_heatpump.const import CONF_EXPERT_MODE, DOMAIN
+from custom_components.adlar_heatpump.const import CONF_EXPERT_MODE, CONF_PARAMS, DOMAIN
 
 ENTRY_ID = "01TESTENTRY"
 
@@ -43,6 +43,7 @@ async def _setup(hass: HomeAssistant, options: dict | None = None) -> MockConfig
         domain=DOMAIN, entry_id=ENTRY_ID,
         data={"host": "192.0.2.1", "port": 502, "slave": 1, "scan_interval": 60},
         options=options or {},
+        minor_version=2,
     )
     entry.add_to_hass(hass)
     assert await hass.config_entries.async_setup(entry.entry_id)
@@ -73,29 +74,9 @@ async def test_entity_counts_default(hass, fake_client):
     assert counts["select"] == 6            # mode, running mode, 4 curves
     assert counts["number"] == 7            # 4 setpoints, indoor, 2 zones
     assert counts["climate"] == 1
-    assert counts["sensor"] > 300           # all P/L parameters read-only
-
-
-async def test_expert_mode_moves_parameters(hass, fake_client):
-    entry = await _setup(hass)
-    registry = er.async_get(hass)
-    assert registry.async_get_entity_id("sensor", DOMAIN, f"{ENTRY_ID}_011E")
-
-    hass.config_entries.async_update_entry(entry, options={CONF_EXPERT_MODE: True})
-    await hass.async_block_till_done()
-
-    # P30 defrost mode is an enum → select; P11 is numeric → number
-    assert registry.async_get_entity_id("select", DOMAIN, f"{ENTRY_ID}_sel_011E")
-    assert registry.async_get_entity_id("number", DOMAIN, f"{ENTRY_ID}_num_010B")
-    assert not registry.async_get_entity_id("sensor", DOMAIN, f"{ENTRY_ID}_011E")
-    # Protected parameters stay read-only
-    assert registry.async_get_entity_id("sensor", DOMAIN, f"{ENTRY_ID}_0177")
-    assert not registry.async_get_entity_id("select", DOMAIN, f"{ENTRY_ID}_sel_0177")
-
-    hass.config_entries.async_update_entry(entry, options={CONF_EXPERT_MODE: False})
-    await hass.async_block_till_done()
-    assert registry.async_get_entity_id("sensor", DOMAIN, f"{ENTRY_ID}_011E")
-    assert not registry.async_get_entity_id("select", DOMAIN, f"{ENTRY_ID}_sel_011E")
+    # Installer parameters are hidden by default: no entities, not polled
+    assert not any(uid.startswith(("0100", "num_0100", "sel_0100")) for _, uid in _registry_ids(hass))
+    assert counts["sensor"] == 59
 
 
 async def test_states(hass, fake_client):
@@ -207,39 +188,6 @@ async def test_state_right_after_write(hass, fake_client):
     assert hass.states.get(_climate_id(hass)).state == "heat"
 
 
-async def test_expert_toggle_keeps_user_settings(hass, fake_client):
-    entry = await _setup(hass)
-    registry = er.async_get(hass)
-    sensor_id = registry.async_get_entity_id("sensor", DOMAIN, f"{ENTRY_ID}_010B")
-    registry.async_update_entity(sensor_id, disabled_by=None, name="HP protect")
-    await hass.async_block_till_done()
-
-    hass.config_entries.async_update_entry(entry, options={CONF_EXPERT_MODE: True})
-    await hass.async_block_till_done()
-    number = registry.async_get(registry.async_get_entity_id("number", DOMAIN, f"{ENTRY_ID}_num_010B"))
-    assert number.entity_id == "number." + sensor_id.split(".", 1)[1]
-    assert number.disabled_by is None and number.name == "HP protect"
-
-    hass.config_entries.async_update_entry(entry, options={CONF_EXPERT_MODE: False})
-    await hass.async_block_till_done()
-    sensor = registry.async_get(registry.async_get_entity_id("sensor", DOMAIN, f"{ENTRY_ID}_010B"))
-    assert sensor.entity_id == sensor_id
-    assert sensor.name == "HP protect"
-
-
-async def test_expert_toggle_keeps_user_disabled(hass, fake_client):
-    entry = await _setup(hass, {CONF_EXPERT_MODE: True})
-    registry = er.async_get(hass)
-    number_id = registry.async_get_entity_id("number", DOMAIN, f"{ENTRY_ID}_num_010B")
-    registry.async_update_entity(number_id, disabled_by=er.RegistryEntryDisabler.USER)
-    hass.config_entries.async_update_entry(entry, options={CONF_EXPERT_MODE: False})
-    await hass.async_block_till_done()
-    hass.config_entries.async_update_entry(entry, options={CONF_EXPERT_MODE: True})
-    await hass.async_block_till_done()
-    number = registry.async_get(registry.async_get_entity_id("number", DOMAIN, f"{ENTRY_ID}_num_010B"))
-    assert number.disabled_by == er.RegistryEntryDisabler.USER
-
-
 async def test_unknown_option_value_is_shown(hass, fake_client):
     await _setup(hass)
     await _set_mode(hass, fake_client, 6)
@@ -254,73 +202,173 @@ async def test_unknown_option_value_is_shown(hass, fake_client):
         )
 
 
-async def test_delta_parameter_is_not_a_temperature(hass, fake_client):
-    await _setup(hass, {CONF_EXPERT_MODE: True})
+def _params(**modes) -> dict:
+    """{"010B": "editable", ...} from reg_010b="editable" style keywords."""
+    return {CONF_PARAMS: {k.removeprefix("reg_").upper(): v for k, v in modes.items()}}
+
+
+def _entity(hass, domain: str, suffix: str):
     registry = er.async_get(hass)
-    number_id = registry.async_get_entity_id("number", DOMAIN, f"{ENTRY_ID}_num_011A")
-    registry.async_update_entity(number_id, disabled_by=None)
-    assert registry.async_get(number_id).original_device_class is None
-    heating_id = registry.async_get_entity_id("number", DOMAIN, f"{ENTRY_ID}_num_0301")
-    assert registry.async_get(heating_id).original_device_class == "temperature"
+    entity_id = registry.async_get_entity_id(domain, DOMAIN, f"{ENTRY_ID}_{suffix}")
+    return registry.async_get(entity_id) if entity_id else None
 
 
-async def test_dc_pump_needs_expert_mode(hass, fake_client):
-    await _setup(hass)
+async def test_param_modes_choose_platform(hass, fake_client):
+    await _setup(hass, _params(reg_010b="editable", reg_011e="editable", reg_010c="read_only",
+                               reg_0177="editable"))
+    assert _entity(hass, "number", "num_010B")          # P11 numeric → number
+    assert _entity(hass, "select", "sel_011E")          # P30 enum → select
+    assert _entity(hass, "sensor", "010C")              # P12 read-only → sensor
+    assert not _entity(hass, "sensor", "010D")          # P13 not chosen → hidden
+    # P119 is protected: asked editable, shown read-only
+    assert _entity(hass, "sensor", "0177") and not _entity(hass, "select", "sel_0177")
+    # Chosen entities are enabled
+    assert _entity(hass, "number", "num_010B").disabled_by is None
+    assert _entity(hass, "sensor", "010C").disabled_by is None
+
+
+async def test_hidden_params_are_not_polled(hass, fake_client):
+    await _setup(hass, _params(reg_010b="read_only"))
+    requested = set()
+    for name, start, count in fake_client.instances[-1].requests:
+        if name == "read_holding_registers":
+            requested |= set(range(start, start + count))
+    assert 0x010B in requested and 0x0177 in requested and 0x0172 in requested
+    assert 0x010D not in requested and 0x0800 not in requested
+
+
+async def test_mode_change_moves_entity_with_settings(hass, fake_client):
+    entry = await _setup(hass, _params(reg_010b="read_only"))
     registry = er.async_get(hass)
-    assert registry.async_get_entity_id("sensor", DOMAIN, f"{ENTRY_ID}_0344")
-    assert not registry.async_get_entity_id("number", DOMAIN, f"{ENTRY_ID}_num_0344")
+    sensor = _entity(hass, "sensor", "010B")
+    registry.async_update_entity(sensor.entity_id, name="HP protect", hidden_by=er.RegistryEntryHider.USER)
 
-
-async def test_options_flow_sets_intervals_and_expert_mode(hass, fake_client):
-    entry = await _setup(hass)
-    result = await hass.config_entries.options.async_init(entry.entry_id)
-    assert result["type"] == "form"
-    result = await hass.config_entries.options.async_configure(
-        result["flow_id"], {"scan_interval": 30, "slow_interval": 300, "expert_mode": True}
-    )
+    hass.config_entries.async_update_entry(entry, options=_params(reg_010b="editable"))
     await hass.async_block_till_done()
-    assert entry.options == {"scan_interval": 30, "slow_interval": 300, "expert_mode": True}
-    coordinator = hass.data[DOMAIN][ENTRY_ID]
-    # Reloaded with the options, which override the setup data
-    assert coordinator.update_interval.total_seconds() == 30
-    assert coordinator.slow_interval == 300
+    number = _entity(hass, "number", "num_010B")
+    assert number.entity_id == "number." + sensor.entity_id.split(".", 1)[1]
+    assert number.name == "HP protect" and number.hidden_by == er.RegistryEntryHider.USER
+    assert not _entity(hass, "sensor", "010B")
 
-
-async def test_expert_entities_enabled_by_default(hass, fake_client):
-    entry = await _setup(hass)
-    registry = er.async_get(hass)
-    hass.config_entries.async_update_entry(entry, options={CONF_EXPERT_MODE: True})
+    registry.async_update_entity(number.entity_id, disabled_by=er.RegistryEntryDisabler.USER)
+    hass.config_entries.async_update_entry(entry, options=_params(reg_010b="read_only"))
     await hass.async_block_till_done()
-    number = registry.async_get(registry.async_get_entity_id("number", DOMAIN, f"{ENTRY_ID}_num_010B"))
-    select = registry.async_get(registry.async_get_entity_id("select", DOMAIN, f"{ENTRY_ID}_sel_011E"))
-    pump = registry.async_get(registry.async_get_entity_id("number", DOMAIN, f"{ENTRY_ID}_num_0344"))
-    assert number.disabled_by is None and select.disabled_by is None and pump.disabled_by is None
+    back = _entity(hass, "sensor", "010B")
+    assert back.entity_id == sensor.entity_id and back.name == "HP protect"
+    assert back.disabled_by == er.RegistryEntryDisabler.USER   # the user's own choice stays
 
-    # Back to read-only: parameters disabled again, as sensors
-    hass.config_entries.async_update_entry(entry, options={CONF_EXPERT_MODE: False})
+    hass.config_entries.async_update_entry(entry, options=_params())
     await hass.async_block_till_done()
-    sensor = registry.async_get(registry.async_get_entity_id("sensor", DOMAIN, f"{ENTRY_ID}_010B"))
-    assert sensor.disabled_by == er.RegistryEntryDisabler.INTEGRATION
+    assert not _entity(hass, "sensor", "010B") and not _entity(hass, "number", "num_010B")
 
 
-async def test_expert_entities_disabled_by_old_default_get_enabled(hass, fake_client):
+async def test_old_default_disabled_entity_is_enabled_when_chosen(hass, fake_client):
     registry = er.async_get(hass)
     entry = MockConfigEntry(
-        domain=DOMAIN, entry_id=ENTRY_ID,
+        domain=DOMAIN, entry_id=ENTRY_ID, minor_version=2,
         data={"host": "192.0.2.1", "port": 502, "slave": 1, "scan_interval": 60},
-        options={CONF_EXPERT_MODE: True},
+        options=_params(reg_010b="editable"),
     )
     entry.add_to_hass(hass)
-    # As created by the previous version: expert number disabled by the integration
     registry.async_get_or_create(
         "number", DOMAIN, f"{ENTRY_ID}_num_010B", config_entry=entry,
         disabled_by=er.RegistryEntryDisabler.INTEGRATION,
     )
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    assert _entity(hass, "number", "num_010B").disabled_by is None
+
+
+@pytest.mark.parametrize("expert", [True, False])
+async def test_migrate_expert_mode(hass, fake_client, expert):
+    registry = er.async_get(hass)
+    entry = MockConfigEntry(
+        domain=DOMAIN, entry_id=ENTRY_ID, version=1, minor_version=1,
+        data={"host": "192.0.2.1", "port": 502, "slave": 1, "scan_interval": 60},
+        options={CONF_EXPERT_MODE: expert, "scan_interval": 600},
+    )
+    entry.add_to_hass(hass)
+    # Expert off: a parameter sensor the user had enabled
+    registry.async_get_or_create("sensor", DOMAIN, f"{ENTRY_ID}_010D", config_entry=entry)
     registry.async_get_or_create(
-        "number", DOMAIN, f"{ENTRY_ID}_num_010C", config_entry=entry,
-        disabled_by=er.RegistryEntryDisabler.USER,
+        "sensor", DOMAIN, f"{ENTRY_ID}_010E", config_entry=entry,
+        disabled_by=er.RegistryEntryDisabler.INTEGRATION,
     )
     assert await hass.config_entries.async_setup(entry.entry_id)
     await hass.async_block_till_done()
-    assert registry.async_get(registry.async_get_entity_id("number", DOMAIN, f"{ENTRY_ID}_num_010B")).disabled_by is None
-    assert registry.async_get(registry.async_get_entity_id("number", DOMAIN, f"{ENTRY_ID}_num_010C")).disabled_by == er.RegistryEntryDisabler.USER
+    assert entry.minor_version == 2 and CONF_EXPERT_MODE not in entry.options
+    assert entry.options["scan_interval"] == 600
+    params = entry.options[CONF_PARAMS]
+    if expert:
+        assert params["010B"] == "editable" and params["0177"] == "read_only"
+        assert params["0343"] == "editable"
+        assert _entity(hass, "number", "num_010D")
+    else:
+        assert params == {"010D": "read_only"}
+        assert _entity(hass, "sensor", "010D") and not _entity(hass, "sensor", "010E")
+
+
+async def test_dc_pump_hidden_until_chosen(hass, fake_client):
+    entry = await _setup(hass)
+    assert not _entity(hass, "number", "num_0344") and not _entity(hass, "sensor", "0344")
+    hass.config_entries.async_update_entry(entry, options=_params(reg_0344="editable"))
+    await hass.async_block_till_done()
+    assert _entity(hass, "number", "num_0344").disabled_by is None
+
+
+async def test_delta_parameter_is_not_a_temperature(hass, fake_client):
+    await _setup(hass, _params(reg_011a="editable", reg_0301="editable"))
+    assert _entity(hass, "number", "num_011A").original_device_class is None
+    assert _entity(hass, "number", "num_0301").original_device_class == "temperature"
+
+
+async def test_options_flow_pages(hass, fake_client):
+    entry = await _setup(hass)
+    flow = hass.config_entries.options
+    result = await flow.async_init(entry.entry_id)
+    assert result["type"] == "menu"
+    assert {"polling", "group_protection", "group_service", "save"} <= set(result["menu_options"])
+
+    result = await flow.async_configure(result["flow_id"], {"next_step_id": "polling"})
+    result = await flow.async_configure(result["flow_id"], {"scan_interval": 300, "slow_interval": 900})
+    assert result["type"] == "menu"
+
+    result = await flow.async_configure(result["flow_id"], {"next_step_id": "group_protection"})
+    assert result["type"] == "form"
+    fields = {str(k): k for k in result["data_schema"].schema}
+    assert "reg_010b" in fields and "set_all" in fields
+    result = await flow.async_configure(
+        result["flow_id"], {"set_all": "keep", "reg_010b": "editable", "reg_010c": "read_only"}
+    )
+    result = await flow.async_configure(result["flow_id"], {"next_step_id": "group_eev"})
+    # set all: editable where allowed; the protected slave address falls back to read-only
+    result = await flow.async_configure(result["flow_id"], {"set_all": "editable"})
+    result = await flow.async_configure(result["flow_id"], {"next_step_id": "save"})
+    assert result["type"] == "create_entry"
+    await hass.async_block_till_done()
+
+    params = entry.options[CONF_PARAMS]
+    assert entry.options["scan_interval"] == 300 and entry.options["slow_interval"] == 900
+    assert params["010B"] == "editable" and params["010C"] == "read_only"
+    assert "010D" not in params                       # left hidden: not stored
+    assert params["0126"] == "editable" and params["012D"] == "read_only"
+    coordinator = hass.data[DOMAIN][ENTRY_ID]
+    assert coordinator.update_interval.total_seconds() == 300
+    assert _entity(hass, "number", "num_010B")
+
+
+def test_translations_cover_every_parameter():
+    import json
+    from pathlib import Path
+
+    from custom_components.adlar_heatpump.config_flow import field_key, group_registers
+    from custom_components.adlar_heatpump.param_info import PARAM_GROUPS
+
+    root = Path(__file__).parent.parent / "custom_components" / "adlar_heatpump"
+    en = json.loads((root / "translations" / "en.json").read_text())
+    assert en == json.loads((root / "strings.json").read_text())
+    for key, _, first, last in PARAM_GROUPS:
+        step = en["options"]["step"][f"group_{key}"]
+        for reg in group_registers(first, last):
+            assert step["data"][field_key(reg)] == reg.name
+            assert step["data_description"][field_key(reg)]

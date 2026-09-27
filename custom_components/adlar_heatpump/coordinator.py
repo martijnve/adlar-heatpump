@@ -15,6 +15,7 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, Upda
 from .const import DOMAIN
 from .registers import (
     AC_CURRENT_REGISTER,
+    ALWAYS_POLLED,
     COILS,
     REFRIGERANT_REGISTER,
     REGISTERS,
@@ -22,6 +23,7 @@ from .registers import (
     SENSOR_SENTINEL,
     R,
     calibrate_ac_current,
+    is_shown,
     temperature_scale,
 )
 
@@ -95,6 +97,7 @@ class AdlarCoordinator(DataUpdateCoordinator):
         slave: int,
         scan_interval: int,
         slow_interval: int,
+        params: dict[str, str] | None = None,
     ) -> None:
         self.host = host
         self.port = port
@@ -109,8 +112,11 @@ class AdlarCoordinator(DataUpdateCoordinator):
         self._unsupported: set[int] = set()
         self._last_slow: float | None = None
 
-        fast = {r.addr for r in REGISTERS if r.fast} | set(STATUS_BLOCK)
-        slow = {r.addr for r in REGISTERS if not r.fast}
+        # Hidden installer parameters aren't read at all
+        params = params or {}
+        polled = [r for r in REGISTERS if is_shown(r, params) or r.addr in ALWAYS_POLLED]
+        fast = {r.addr for r in polled if r.fast} | set(STATUS_BLOCK)
+        slow = {r.addr for r in polled if not r.fast}
         self._fast_blocks = plan_blocks(fast)
         self._slow_blocks = plan_blocks(slow)
         self._coil_blocks = plan_blocks(COILS)

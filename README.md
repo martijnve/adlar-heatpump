@@ -65,7 +65,7 @@ Copy the `custom_components/adlar_heatpump/` folder into your HA `config/custom_
    - **Slave ID** (default `1`)
    - **Scan interval** in seconds (default `600`)
 
-Scan interval, parameter read interval and expert mode can be changed later under **Configure**.
+Polling intervals and which installer parameters show can be changed later under **Configure**.
 
 ---
 
@@ -80,20 +80,28 @@ Every register in the [HHI Modbus developer reference v2.2](https://github.com/h
 | 3 | Running status | `0x0000`–`0x0001` | Binary sensor per bit | Yes |
 | 4 | Faults | `0x0002`–`0x0009` (+ System 2 at `0x000A`–`0x000E` on dual-compressor units) | Binary sensor per bit, device class *problem* | Yes (diagnostic) |
 | 5 | Relay outputs, switch ports | `0x0019`–`0x001F` | Binary sensor per bit | No |
-| 6 | User control | `0x0300`–`0x0319`, `0x0343`–`0x0344` | Climate, number (cooling / heating / hot water / floor setpoints, indoor and zone setpoints), select (mode, running mode, 4 curves), switch (ON/OFF). DC pump control and output: sensors, writable in expert mode | Setpoints, mode, curves, ON/OFF |
+| 6 | User control | `0x0300`–`0x0319`, `0x0343`–`0x0344` | Climate, number (cooling / heating / hot water / floor setpoints, indoor and zone setpoints), select (mode, running mode, 4 curves), switch (ON/OFF). DC pump control and output: installer parameters, see below | Setpoints, mode, curves, ON/OFF |
 | 7 | Command coils | `0x1000`, `0x1001`, `0x1012`, `0x1013`, `0x1018`, `0x101A` | Switch: Powerful, Silent, Quick Heat, Force Defrost, Force Sterilization, Allow Water Return | Yes |
 | 8 | Limits | `0x00FA`–`0x00FF` | Sensor (diagnostic) | Yes |
 | 9 | Version info | `0x0360`–`0x0363` | Sensor (diagnostic) | Yes |
-| 10 | Installer parameters P00–P262, L11–L36 | `0x0100`–`0x0206`, `0x0800`–`0x0819` | Sensor; number/select in expert mode | No; yes in expert mode |
+| 10 | Installer parameters P00–P262, L11–L36 | `0x0100`–`0x0206`, `0x0800`–`0x0819` | Per parameter: hidden, sensor, or number/select | Hidden by default |
 
 Entity names and unique IDs of the upstream 1.4.x entities are unchanged, so existing dashboards and automations keep working. Two value changes when upgrading from upstream 1.4.x:
 
 1. **Fan Running Speed** (`0x0041`) is reported in rpm, per the v2.2 register model, instead of Hz. Home Assistant raises a *units changed* repair for its long-term statistics once; resolve it under **Developer Tools → Statistics**.
 2. **AC Input Current** (`0x0045`), and **Calculated Power** derived from it, go through the clamp calibration curve, so they read differently from upstream's raw ×0.1.
 
-### Expert mode
+### Installer parameters
 
-**Settings → Devices & Services → Adlar Heatpump → Configure** has an *Expert mode* switch. With it on, the installer parameters become writable number/select entities, enabled and clamped to the documented range. With it off they are read-only sensors. DC pump control and output (`0x0343`/`0x0344`) are also writable only in expert mode: manual pump control stays in effect until set back to Auto, and a stopped pump with a running compressor can freeze the plate heat exchanger. Some parameters are never writable: P45 slave address, P114 compressors, P115 model, P119 refrigerant, P155 compressor code, P183 password, and any parameter without a documented range.
+**Settings → Devices & Services → Adlar Heatpump → Configure** opens a menu with the polling intervals and one page per group of installer parameters (P00–P262, L11–L36, and the DC pump manual control). On each page every parameter has a short description, its range, and a choice:
+
+1. **Hidden** (default): no entity, and the value isn't read from the heat pump.
+2. **Read-only**: a sensor that shows the value.
+3. **Editable**: a number or dropdown that writes to the heat pump, clamped to the documented range.
+
+A *Set all in this group* field applies one choice to a whole page. Finish with **Save** in the menu. Some parameters can only be hidden or read-only: P45 slave address, P114 compressors, P115 model, P119 refrigerant, P155 compressor code, P183 password, and any parameter without a documented range. Manual DC pump control stays in effect until set back to Auto, and a stopped pump with a running compressor can freeze the plate heat exchanger.
+
+Moving a parameter between read-only and editable keeps its entity ID, name, area and hidden/disabled state. The texts come from `param_info.py`; run `tools/gen_translations.py` after changing it or the register map.
 
 > Wrong values for protection, valve or frequency parameters can damage the heat pump. Only change a parameter when you know what it does.
 

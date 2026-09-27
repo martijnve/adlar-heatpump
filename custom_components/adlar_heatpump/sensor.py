@@ -10,7 +10,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from .const import CONF_EXPERT_MODE, DOMAIN
+from .const import CONF_PARAMS, DOMAIN
 from .coordinator import AdlarCoordinator
 from .entity import AdlarEntity, AdlarRegisterEntity
 from .registers import (
@@ -19,6 +19,7 @@ from .registers import (
     REGISTERS,
     SENSOR,
     R,
+    is_shown,
     is_writable,
 )
 
@@ -46,11 +47,13 @@ async def async_setup_entry(
     hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback
 ) -> None:
     coordinator: AdlarCoordinator = hass.data[DOMAIN][entry.entry_id]
-    expert = entry.options.get(CONF_EXPERT_MODE, False)
+    params = entry.options.get(CONF_PARAMS, {})
 
-    # Every register that isn't writable in the current mode is a sensor
+    # Every shown register that isn't writable is a sensor
     entities: list[SensorEntity] = [
-        AdlarSensor(coordinator, reg) for reg in REGISTERS if not is_writable(reg, expert)
+        AdlarSensor(coordinator, reg)
+        for reg in REGISTERS
+        if is_shown(reg, params) and not is_writable(reg, params)
     ]
     entities.append(AdlarThermalPowerSensor(coordinator))
     entities.append(AdlarCOPSensor(coordinator))

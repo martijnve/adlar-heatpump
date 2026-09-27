@@ -1,4 +1,4 @@
-"""Select platform for Adlar Heatpump (modes, curves, and P/L enums in expert mode)."""
+"""Select platform for Adlar Heatpump (modes, curves, and P/L enums as chosen in the options)."""
 from __future__ import annotations
 
 from homeassistant.components.select import SelectEntity
@@ -7,7 +7,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ServiceValidationError
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from .const import CONF_EXPERT_MODE, DOMAIN
+from .const import CONF_PARAMS, DOMAIN
 from .coordinator import AdlarCoordinator
 from .entity import AdlarRegisterEntity
 from .registers import REGISTERS, R, is_writable
@@ -17,11 +17,11 @@ async def async_setup_entry(
     hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback
 ) -> None:
     coordinator: AdlarCoordinator = hass.data[DOMAIN][entry.entry_id]
-    expert = entry.options.get(CONF_EXPERT_MODE, False)
+    params = entry.options.get(CONF_PARAMS, {})
     async_add_entities(
         AdlarSelect(coordinator, reg)
         for reg in REGISTERS
-        if is_writable(reg, expert) and reg.options is not None
+        if is_writable(reg, params) and reg.options is not None
     )
 
 

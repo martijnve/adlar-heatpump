@@ -13,7 +13,9 @@ CONF_SLAVE = "slave"
 # Seconds between reads of the slow tier (P/L parameters, limits, version info)
 CONF_SLOW_INTERVAL = "slow_interval"
 DEFAULT_SLOW_INTERVAL = 600
-# Expert mode: P/L installer parameters become writable number/select entities
+# Per installer parameter ("0100": "read_only" / "editable"; missing = hidden)
+CONF_PARAMS = "params"
+# Replaced by CONF_PARAMS in config entry version 1.2; read only to migrate
 CONF_EXPERT_MODE = "expert_mode"
 
 DEVICE_NAME = "Adlar Aurora II Heatpump"
