@@ -256,3 +256,18 @@ async def test_dc_pump_needs_expert_mode(hass, fake_client):
     registry = er.async_get(hass)
     assert registry.async_get_entity_id("sensor", DOMAIN, f"{ENTRY_ID}_0344")
     assert not registry.async_get_entity_id("number", DOMAIN, f"{ENTRY_ID}_num_0344")
+
+
+async def test_options_flow_sets_intervals_and_expert_mode(hass, fake_client):
+    entry = await _setup(hass)
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    assert result["type"] == "form"
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], {"scan_interval": 30, "slow_interval": 300, "expert_mode": True}
+    )
+    await hass.async_block_till_done()
+    assert entry.options == {"scan_interval": 30, "slow_interval": 300, "expert_mode": True}
+    coordinator = hass.data[DOMAIN][ENTRY_ID]
+    # Reloaded with the options, which override the setup data
+    assert coordinator.update_interval.total_seconds() == 30
+    assert coordinator.slow_interval == 300
