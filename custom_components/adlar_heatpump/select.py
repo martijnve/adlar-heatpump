@@ -38,10 +38,4 @@ class AdlarSelect(AdlarRegisterEntity, SelectEntity):
         return None if raw is None else self._reg.options.get(raw, f"Unknown ({raw})")
 
     async def async_select_option(self, option: str) -> None:
-        value = self._values.get(option)
-        if value is None:
-            return
-        await self.hass.async_add_executor_job(
-            self.coordinator.write_value, self._reg, value
-        )
-        await self.coordinator.async_request_refresh()
+        await self.coordinator.async_write_value(self._reg, self._values[option])

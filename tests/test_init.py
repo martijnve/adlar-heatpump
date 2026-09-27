@@ -5,6 +5,7 @@ from collections import Counter
 
 import pytest
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import entity_registry as er
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
@@ -126,3 +127,81 @@ async def test_set_temperature_writes_active_setpoint(hass, fake_client):
     )
     client = fake_client.instances[-1]
     assert ("write_register", 0x0301, 45) in client.writes
+
+
+def _climate_id(hass) -> str:
+    return er.async_get(hass).async_get_entity_id("climate", DOMAIN, f"{ENTRY_ID}_climate")
+
+
+async def _set_mode(hass, fake_client, mode: int, on: int = 1) -> None:
+    client = fake_client.instances[-1]
+    client.registers[0x0304] = mode
+    client.registers[0x0305] = on
+    coordinator = hass.data[DOMAIN][ENTRY_ID]
+    await coordinator.async_refresh()
+    await hass.async_block_till_done()
+
+
+@pytest.mark.parametrize(
+    ("mode", "requested", "written_mode"),
+    [
+        (1, "cool", 0),        # plain mode switch
+        (2, "heat", 5),        # hot water only: keep hot water, add heating
+        (4, "heat", 5),        # hot water + cooling → hot water + heating
+        (5, "heat", None),     # already there: no mode write
+        (0, "heat_cool", 3),
+    ],
+)
+async def test_set_hvac_mode_keeps_hot_water(hass, fake_client, mode, requested, written_mode):
+    await _setup(hass)
+    await _set_mode(hass, fake_client, mode)
+    client = fake_client.instances[-1]
+    client.writes.clear()
+    await hass.services.async_call(
+        "climate", "set_hvac_mode", {"entity_id": _climate_id(hass), "hvac_mode": requested},
+        blocking=True,
+    )
+    mode_writes = [w for w in client.writes if w[1] == 0x0304]
+    assert mode_writes == ([("write_register", 0x0304, written_mode)] if written_mode is not None else [])
+    assert hass.states.get(_climate_id(hass)).state == requested
+
+
+async def test_hot_water_only_shows_off_and_ignores_setpoint(hass, fake_client):
+    await _setup(hass)
+    await _set_mode(hass, fake_client, 2)
+    state = hass.states.get(_climate_id(hass))
+    assert state.state == "off"
+    assert state.attributes["temperature"] is None
+
+
+async def test_failed_mode_write_does_not_switch_on(hass, fake_client):
+    await _setup(hass)
+    await _set_mode(hass, fake_client, 0, on=0)
+    client = fake_client.instances[-1]
+    client.reject[0x0304] = 4
+    client.writes.clear()
+    with pytest.raises(HomeAssistantError):
+        await hass.services.async_call(
+            "climate", "set_hvac_mode", {"entity_id": _climate_id(hass), "hvac_mode": "heat"},
+            blocking=True,
+        )
+    assert not any(w[1] == 0x0305 for w in client.writes)
+
+
+async def test_set_temperature_with_hvac_mode(hass, fake_client):
+    await _setup(hass)
+    client = fake_client.instances[-1]
+    client.writes.clear()
+    await hass.services.async_call(
+        "climate", "set_temperature",
+        {"entity_id": _climate_id(hass), "temperature": 20, "hvac_mode": "cool"},
+        blocking=True,
+    )
+    assert client.writes == [("write_register", 0x0304, 0), ("write_register", 0x0300, 20)]
+
+
+async def test_state_right_after_write(hass, fake_client):
+    await _setup(hass)
+    await hass.services.async_call("climate", "turn_off", {"entity_id": _climate_id(hass)}, blocking=True)
+    await hass.services.async_call("climate", "turn_on", {"entity_id": _climate_id(hass)}, blocking=True)
+    assert hass.states.get(_climate_id(hass)).state == "heat"

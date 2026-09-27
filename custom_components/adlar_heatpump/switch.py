@@ -33,10 +33,7 @@ class AdlarSwitch(AdlarEntity, SwitchEntity):
         return None if raw is None else bool(raw)
 
     async def _write(self, value: int) -> None:
-        await self.hass.async_add_executor_job(
-            self.coordinator.write_value, BY_ADDR[SWITCH_REGISTER], value
-        )
-        await self.coordinator.async_request_refresh()
+        await self.coordinator.async_write_value(BY_ADDR[SWITCH_REGISTER], value)
 
     async def async_turn_on(self, **kwargs) -> None:
         await self._write(1)
@@ -58,10 +55,7 @@ class AdlarCoilSwitch(AdlarEntity, SwitchEntity):
         return self.coordinator.data.get(self._addr)
 
     async def _write(self, value: bool) -> None:
-        await self.hass.async_add_executor_job(
-            self.coordinator.write_coil, self._addr, value
-        )
-        await self.coordinator.async_request_refresh()
+        await self.coordinator.async_write_coil(self._addr, value)
 
     async def async_turn_on(self, **kwargs) -> None:
         await self._write(True)

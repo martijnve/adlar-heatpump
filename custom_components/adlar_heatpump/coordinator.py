@@ -3,11 +3,13 @@ from __future__ import annotations
 
 import inspect
 import logging
+import threading
 import time
 from datetime import timedelta
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .const import DOMAIN
@@ -36,6 +38,10 @@ BLOCK_SIZE = 32
 # Modbus exception code for an address the controller doesn't implement
 ILLEGAL_DATA_ADDRESS = 2
 
+# Protocol version register; coils (FC01/FC05) need protocol >= 130
+PROTOCOL_VERSION_REGISTER = 0x0363
+MIN_PROTOCOL_COILS = 130
+
 # All status/fault/relay registers, including the System 2-4 mirrors, in one read
 STATUS_BLOCK = range(0x0020)
 
@@ -61,6 +67,18 @@ class ModbusUnavailable(Exception):
     """Gateway niet bereikbaar - hele pollcyclus overslaan."""
 
 
+class ModbusRequestFailed(Exception):
+    """One request got no (valid) answer; the connection is dropped and the next request reconnects."""
+
+
+class ModbusRejected(Exception):
+    """The controller answered with a Modbus exception response."""
+
+    def __init__(self, code: int | None, message: str) -> None:
+        super().__init__(message)
+        self.code = code
+
+
 class AdlarCoordinator(DataUpdateCoordinator):
     """Polls the heat pump in two tiers and decodes all registers.
 
@@ -83,8 +101,11 @@ class AdlarCoordinator(DataUpdateCoordinator):
         self.slave = slave
         self.slow_interval = slow_interval
         self._client = None
+        # Polls and writes run in different executor threads; one request at a time
+        self._lock = threading.Lock()
         self._unit_kw: str | None = None
         self._raw: dict[int, int] = {}
+        self._coils: dict[int, bool] = {}
         self._unsupported: set[int] = set()
         self._last_slow: float | None = None
 
@@ -92,7 +113,7 @@ class AdlarCoordinator(DataUpdateCoordinator):
         slow = {r.addr for r in REGISTERS if not r.fast}
         self._fast_blocks = plan_blocks(fast)
         self._slow_blocks = plan_blocks(slow)
-        self._coil_block = (min(COILS), max(COILS) - min(COILS) + 1)
+        self._coil_blocks = plan_blocks(COILS)
 
         super().__init__(
             hass, _LOGGER, name=DOMAIN, config_entry=entry,
@@ -111,18 +132,27 @@ class AdlarCoordinator(DataUpdateCoordinator):
 
     # ── Transport ──────────────────────────────────────────────────────
 
+    def _drop_client(self) -> None:
+        if self._client is not None:
+            try:
+                self._client.close()
+            except Exception:
+                _LOGGER.debug("Error closing Modbus client", exc_info=True)
+        self._client = None
+
+    def close(self) -> None:
+        """Close the connection (on unload)."""
+        with self._lock:
+            self._drop_client()
+
     def _get_client(self):
         """Return connected client, reconnect if needed."""
         from pymodbus.client import ModbusTcpClient
         if self._client is None or not self._client.connected:
-            if self._client is not None:
-                try:
-                    self._client.close()
-                except Exception:
-                    pass
+            self._drop_client()
             self._client = ModbusTcpClient(host=self.host, port=self.port, timeout=10)
             if not self._client.connect():
-                self._client = None
+                self._drop_client()
                 raise ModbusUnavailable(
                     f"geen verbinding met {self.host}:{self.port}"
                 )
@@ -136,58 +166,79 @@ class AdlarCoordinator(DataUpdateCoordinator):
         return {self._unit_kw: self.slave}
 
     def _request(self, name: str, address: int, **kwargs):
-        """Send one request. Returns the response, or None on a Modbus exception response.
+        """Send one request and return the response.
 
-        Transport failures drop the connection and raise ModbusUnavailable.
+        Raises ModbusUnavailable when the gateway can't be reached, ModbusRequestFailed when
+        the request got no valid answer, ModbusRejected on an exception response.
         """
-        time.sleep(REQUEST_DELAY)
-        client = self._get_client()
-        method = getattr(client, name)
-        try:
-            result = method(address, **kwargs, **self._unit(method))
-        except Exception as err:
-            self._client = None
-            raise ModbusUnavailable(f"{name} 0x{address:04X}: {err}") from err
-        if result.isError():
-            if getattr(result, "exception_code", None) == ILLEGAL_DATA_ADDRESS:
-                return None
-            self._client = None
-            raise ModbusUnavailable(f"{name} 0x{address:04X}: {result}")
-        return result
+        with self._lock:
+            time.sleep(REQUEST_DELAY)
+            client = self._get_client()
+            method = getattr(client, name)
+            try:
+                result = method(address, **kwargs, **self._unit(method))
+            except Exception as err:
+                self._drop_client()
+                raise ModbusRequestFailed(f"{name} 0x{address:04X}: {err}") from err
+            if result.isError():
+                code = getattr(result, "exception_code", None)
+                if code is None:
+                    # Older pymodbus returns transport errors as an error object
+                    self._drop_client()
+                    raise ModbusRequestFailed(f"{name} 0x{address:04X}: {result}")
+                raise ModbusRejected(code, f"{name} 0x{address:04X}: exception code {code}")
+            return result
 
-    def _read_blocks(self, blocks: list[tuple[int, int]]) -> None:
-        """Read holding register blocks into the raw cache.
+    def _read(self, kind: str, start: int, count: int) -> list:
+        name = "read_coils" if kind == "coils" else "read_holding_registers"
+        result = self._request(name, start, count=count)
+        values = result.bits if kind == "coils" else result.registers
+        return list(values[:count])
 
-        A block the controller rejects is retried register by register; addresses it
-        rejects on their own are remembered and skipped from then on.
+    def _read_blocks(self, blocks: list[tuple[int, int]], store: dict, kind: str, forget: bool) -> tuple[int, int]:
+        """Read blocks into `store`; returns (requests answered, requests failed).
+
+        A block the controller rejects is retried address by address; addresses rejected
+        on their own as illegal are remembered and skipped from then on. When `forget` is
+        set, addresses that couldn't be read lose their cached value.
         """
+        ok = failed = 0
         for start, count in blocks:
             addrs = [a for a in range(start, start + count) if a not in self._unsupported]
-            if not addrs:
-                continue
             for sub_start, sub_count in plan_blocks(addrs):
-                result = self._request(
-                    "read_holding_registers", sub_start, count=sub_count
-                )
-                if result is not None:
-                    for i, value in enumerate(result.registers[:sub_count]):
-                        self._raw[sub_start + i] = value
+                try:
+                    values = self._read(kind, sub_start, sub_count)
+                except ModbusRequestFailed as err:
+                    _LOGGER.debug("Read failed: %s", err)
+                    failed += 1
+                    if forget:
+                        for addr in range(sub_start, sub_start + sub_count):
+                            store.pop(addr, None)
+                    continue
+                except ModbusRejected:
+                    values = None
+                if values is not None:
+                    ok += 1
+                    for i, value in enumerate(values):
+                        store[sub_start + i] = value
                     continue
                 for addr in range(sub_start, sub_start + sub_count):
-                    single = self._request("read_holding_registers", addr, count=1)
-                    if single is None:
-                        _LOGGER.debug("Register 0x%04X not supported, skipping it", addr)
-                        self._unsupported.add(addr)
-                        self._raw.pop(addr, None)
-                    else:
-                        self._raw[addr] = single.registers[0]
-
-    def _read_coils(self) -> dict[int, bool]:
-        start, count = self._coil_block
-        result = self._request("read_coils", start, count=count)
-        if result is None:
-            return {}
-        return {addr: bool(result.bits[addr - start]) for addr in COILS}
+                    try:
+                        store[addr] = self._read(kind, addr, 1)[0]
+                        ok += 1
+                    except ModbusRejected as err:
+                        if err.code == ILLEGAL_DATA_ADDRESS:
+                            _LOGGER.debug("Address 0x%04X not supported, skipping it", addr)
+                            self._unsupported.add(addr)
+                            store.pop(addr, None)
+                        elif forget:
+                            store.pop(addr, None)
+                    except ModbusRequestFailed as err:
+                        _LOGGER.debug("Read failed: %s", err)
+                        failed += 1
+                        if forget:
+                            store.pop(addr, None)
+        return ok, failed
 
     # ── Decoding ───────────────────────────────────────────────────────
 
@@ -219,22 +270,7 @@ class AdlarCoordinator(DataUpdateCoordinator):
             raw = round(value / reg.scale)
         return raw & 0xFFFF
 
-    # ── Polling ────────────────────────────────────────────────────────
-
-    async def _async_update_data(self) -> dict:
-        try:
-            return await self.hass.async_add_executor_job(self._fetch_all)
-        except Exception as err:
-            raise UpdateFailed(f"Error communicating with heatpump: {err}") from err
-
-    def _fetch_all(self) -> dict:
-        now = time.monotonic()
-        if self._last_slow is None or now - self._last_slow >= self.slow_interval:
-            self._read_blocks(self._slow_blocks)
-            self._last_slow = now
-        self._read_blocks(self._fast_blocks)
-        coils = self._read_coils()
-
+    def _build_data(self) -> dict:
         data: dict[int, object] = {}
         for reg in REGISTERS:
             raw = self._raw.get(reg.addr)
@@ -246,30 +282,56 @@ class AdlarCoordinator(DataUpdateCoordinator):
                 data[reg.addr] = self.decode(reg, raw)
         for addr in STATUS_BLOCK:
             data[addr] = self._raw.get(addr)
-        data.update(coils)
+        for addr in COILS:
+            coil = self._coils.get(addr)
+            data[addr] = None if coil is None else bool(coil)
         return data
+
+    # ── Polling ────────────────────────────────────────────────────────
+
+    async def _async_update_data(self) -> dict:
+        try:
+            return await self.hass.async_add_executor_job(self._fetch_all)
+        except Exception as err:
+            raise UpdateFailed(f"Error communicating with heatpump: {err}") from err
+
+    def _fetch_all(self) -> dict:
+        now = time.monotonic()
+        if self._last_slow is None or now - self._last_slow >= self.slow_interval:
+            # Keep the previous values of a failed slow block (P119 in particular, which
+            # sets the temperature scale) and retry the whole tier on the next poll
+            _, failed = self._read_blocks(self._slow_blocks, self._raw, "registers", forget=False)
+            if not failed:
+                self._last_slow = now
+        ok, failed = self._read_blocks(self._fast_blocks, self._raw, "registers", forget=True)
+        if not ok:
+            raise ModbusRequestFailed(f"no answer to any of {failed} requests")
+        protocol = self._raw.get(PROTOCOL_VERSION_REGISTER)
+        if protocol is None or protocol >= MIN_PROTOCOL_COILS:
+            self._read_blocks(self._coil_blocks, self._coils, "coils", forget=True)
+        return self._build_data()
 
     # ── Writing ────────────────────────────────────────────────────────
 
-    def write_value(self, reg: R, value: float) -> bool:
-        """Write a holding register (FC06) and update the cache so the slow tier shows it."""
-        raw = self.encode(reg, value)
+    def _write(self, name: str, address: int, value) -> None:
         try:
-            result = self._request("write_register", reg.addr, value=raw)
-        except ModbusUnavailable as err:
-            _LOGGER.error("Write error at 0x%04X: %s", reg.addr, err)
-            return False
-        if result is None:
-            _LOGGER.error("Write to 0x%04X rejected by the controller", reg.addr)
-            return False
-        self._raw[reg.addr] = raw
-        return True
+            self._request(name, address, value=value)
+        except (ModbusUnavailable, ModbusRequestFailed, ModbusRejected) as err:
+            raise HomeAssistantError(f"Writing 0x{address:04X} failed: {err}") from err
 
-    def write_coil(self, address: int, value: bool) -> bool:
-        """Write a command coil (FC05)."""
-        try:
-            result = self._request("write_coil", address, value=value)
-        except ModbusUnavailable as err:
-            _LOGGER.error("Write error at coil 0x%04X: %s", address, err)
-            return False
-        return result is not None
+    async def async_write_value(self, reg: R, value: float) -> None:
+        """Write a holding register (FC06); raises HomeAssistantError when it fails.
+
+        The cache is updated straight away, so the entity (and the slow tier) shows the
+        new value before the next poll.
+        """
+        raw = self.encode(reg, value)
+        await self.hass.async_add_executor_job(self._write, "write_register", reg.addr, raw)
+        self._raw[reg.addr] = raw
+        self.async_set_updated_data(self._build_data())
+
+    async def async_write_coil(self, address: int, value: bool) -> None:
+        """Write a command coil (FC05); raises HomeAssistantError when it fails."""
+        await self.hass.async_add_executor_job(self._write, "write_coil", address, value)
+        self._coils[address] = value
+        self.async_set_updated_data(self._build_data())

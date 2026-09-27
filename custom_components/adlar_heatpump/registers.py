@@ -668,15 +668,15 @@ def temperature_scale(refrigerant_type: int | None) -> float:
 
 
 def calibrate_ac_current(value: float) -> float:
-    """Interpolate the AC input current calibration curve; extrapolate past the end."""
+    """Interpolate the AC input current calibration curve (non-linear below ~10 A)."""
     curve = AC_CURRENT_CALIBRATION
     if value <= curve[0][0]:
         return curve[0][1]
     for (x0, y0), (x1, y1) in pairwise(curve):
         if value <= x1:
             return y0 + (value - x0) * (y1 - y0) / (x1 - x0)
-    (x0, y0), (x1, y1) = curve[-2], curve[-1]
-    return y1 + (value - x1) * (y1 - y0) / (x1 - x0)
+    # Above the curve the clamp is linear again: keep the last offset
+    return value - (curve[-1][0] - curve[-1][1])
 
 
 def is_writable(reg: R, expert: bool) -> bool:

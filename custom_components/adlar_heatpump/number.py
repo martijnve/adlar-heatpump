@@ -43,7 +43,4 @@ class AdlarNumber(AdlarRegisterEntity, NumberEntity):
         return self._raw_value
 
     async def async_set_native_value(self, value: float) -> None:
-        await self.hass.async_add_executor_job(
-            self.coordinator.write_value, self._reg, value
-        )
-        await self.coordinator.async_request_refresh()
+        await self.coordinator.async_write_value(self._reg, value)

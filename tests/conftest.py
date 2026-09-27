@@ -37,34 +37,58 @@ class FakeModbusClient:
     """Answers like the controller: exception code 2 for addresses it doesn't have."""
 
     instances: ClassVar[list[FakeModbusClient]] = []
+    # Set to make connect() fail, as when the gateway is down
+    refuse_connect = False
 
     def __init__(self, host=None, port=None, timeout=None):
-        self.registers, self.coils = load_snapshot()
+        if FakeModbusClient.instances:
+            # A reconnect talks to the same controller
+            previous = FakeModbusClient.instances[-1]
+            self.registers, self.coils = previous.registers, previous.coils
+            self.reject, self.fail_at = previous.reject, previous.fail_at
+            self.fail_all, self.reject_coils = previous.fail_all, previous.reject_coils
+        else:
+            self.registers, self.coils = load_snapshot()
+            self.reject: dict[int, int] = {}      # address -> exception code
+            self.fail_at: set[int] = set()        # block start addresses that time out
+            self.fail_all = False
+            self.reject_coils: int | None = None  # exception code for every FC01
         self.connected = False
         self.requests: list[tuple[str, int, int]] = []
         self.writes: list[tuple[str, int, object]] = []
         FakeModbusClient.instances.append(self)
 
     def connect(self) -> bool:
-        self.connected = True
-        return True
+        self.connected = not FakeModbusClient.refuse_connect
+        return self.connected
 
     def close(self) -> None:
         self.connected = False
 
     def read_holding_registers(self, address, *, count=1, device_id=1):
         self.requests.append(("read_holding_registers", address, count))
+        if self.fail_all or address in self.fail_at:
+            raise TimeoutError("No response received after 3 retries")
         addrs = range(address, address + count)
+        for a in addrs:
+            if a in self.reject:
+                return _Response(exception_code=self.reject[a])
         if any(a not in self.registers for a in addrs):
             return _Response(exception_code=2)
         return _Response(registers=[self.registers[a] for a in addrs])
 
     def read_coils(self, address, *, count=1, device_id=1):
         self.requests.append(("read_coils", address, count))
+        if self.fail_all:
+            raise TimeoutError("No response received after 3 retries")
+        if self.reject_coils is not None:
+            return _Response(exception_code=self.reject_coils)
         return _Response(bits=[self.coils.get(a, False) for a in range(address, address + count)])
 
     def write_register(self, address, *, value, device_id=1):
         self.writes.append(("write_register", address, value))
+        if address in self.reject:
+            return _Response(exception_code=self.reject[address])
         if address not in self.registers:
             return _Response(exception_code=2)
         self.registers[address] = value

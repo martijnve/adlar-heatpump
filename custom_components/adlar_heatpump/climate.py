@@ -7,14 +7,16 @@ from homeassistant.components.climate import (
     HVACMode,
 )
 from homeassistant.components.climate.const import (
+    ATTR_HVAC_MODE,
     PRESET_BOOST,
     PRESET_ECO,
     PRESET_NONE,
     HVACAction,
 )
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import UnitOfTemperature
+from homeassistant.const import ATTR_TEMPERATURE, UnitOfTemperature
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import ServiceValidationError
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import DOMAIN
@@ -27,25 +29,29 @@ _MODE_REGISTER = 0x0304
 _RUNNING_MODE_REGISTER = 0x0307
 _SETPOINT_COOLING = 0x0300
 _SETPOINT_HEATING = 0x0301
-_SETPOINT_HOT_WATER = 0x0302
 _SETPOINT_FLOOR = 0x0303
 _WATER_INLET_TEMP = 0x004F
 _COMPRESSOR_FREQUENCY = 0x0040
 
-# Mapping between HA HVACMode and Modbus mode values
-_HVAC_TO_MODBUS = {
-    HVACMode.COOL: 0,
-    HVACMode.HEAT: 1,
-    HVACMode.HEAT_COOL: 3,
-}
-# Every mode value, including the hot water combinations, and the setpoint it follows
+# Mode register values: 0 Cooling, 1 Heating, 2 Hot Water, 3 Floor Heating,
+# 4 Hot Water + Cooling, 5 Hot Water + Heating, 7 Hot Water + Floor Heating.
+# The climate entity covers space heating/cooling only: Hot Water alone shows as OFF (as
+# upstream did), and a hot water combination shows as its space mode.
 _MODBUS_TO_HVAC = {
-    0: HVACMode.COOL, 1: HVACMode.HEAT, 2: HVACMode.HEAT, 3: HVACMode.HEAT_COOL,
+    0: HVACMode.COOL, 1: HVACMode.HEAT, 3: HVACMode.HEAT_COOL,
     4: HVACMode.COOL, 5: HVACMode.HEAT, 7: HVACMode.HEAT_COOL,
 }
-_MODBUS_TO_SETPOINT = {
-    0: _SETPOINT_COOLING, 1: _SETPOINT_HEATING, 2: _SETPOINT_HOT_WATER, 3: _SETPOINT_FLOOR,
-    4: _SETPOINT_COOLING, 5: _SETPOINT_HEATING, 7: _SETPOINT_FLOOR,
+_HOT_WATER_MODES = {2, 4, 5, 7}
+# Mode to write for an HVAC mode, without and with hot water
+_HVAC_TO_MODBUS = {
+    HVACMode.COOL: (0, 4),
+    HVACMode.HEAT: (1, 5),
+    HVACMode.HEAT_COOL: (3, 7),
+}
+_HVAC_TO_SETPOINT = {
+    HVACMode.COOL: _SETPOINT_COOLING,
+    HVACMode.HEAT: _SETPOINT_HEATING,
+    HVACMode.HEAT_COOL: _SETPOINT_FLOOR,
 }
 
 # Preset modes
@@ -88,7 +94,7 @@ class AdlarClimate(AdlarEntity, ClimateEntity):
 
     @property
     def _setpoint_register(self) -> int | None:
-        return _MODBUS_TO_SETPOINT.get(self._mode)
+        return _HVAC_TO_SETPOINT.get(_MODBUS_TO_HVAC.get(self._mode))
 
     @property
     def current_temperature(self) -> float | None:
@@ -135,43 +141,48 @@ class AdlarClimate(AdlarEntity, ClimateEntity):
         )
 
     async def _write(self, address: int, value: float) -> None:
-        await self.hass.async_add_executor_job(
-            self.coordinator.write_value, BY_ADDR[address], value
-        )
+        await self.coordinator.async_write_value(BY_ADDR[address], value)
 
     async def async_set_preset_mode(self, preset_mode: str) -> None:
         """Set preset mode (Standard/Boost/Silent)."""
         await self._write(_RUNNING_MODE_REGISTER, _PRESET_TO_MODBUS.get(preset_mode, 0))
-        await self.coordinator.async_request_refresh()
 
     async def async_set_hvac_mode(self, hvac_mode: HVACMode) -> None:
         """Set HVAC mode (on/off + mode register).
 
-        The mode register is left alone when the unit already runs a mode that maps to the
-        requested one, so switching back on doesn't drop a hot water combination.
+        A running hot water function is kept: HEAT from Hot Water writes Hot Water + Heating.
+        Each write raises on failure, so the unit isn't switched on after a failed mode write.
         """
         if hvac_mode == HVACMode.OFF:
             await self._write(SWITCH_REGISTER, 0)
-        else:
-            modbus_mode = _HVAC_TO_MODBUS.get(hvac_mode)
-            if modbus_mode is not None and _MODBUS_TO_HVAC.get(self._mode) != hvac_mode:
-                await self._write(_MODE_REGISTER, modbus_mode)
+            return
+        without_dhw, with_dhw = _HVAC_TO_MODBUS[hvac_mode]
+        target = with_dhw if self._mode in _HOT_WATER_MODES else without_dhw
+        if self._mode != target:
+            await self._write(_MODE_REGISTER, target)
+        if not self.coordinator.data.get(SWITCH_REGISTER):
             await self._write(SWITCH_REGISTER, 1)
-        await self.coordinator.async_request_refresh()
 
     async def async_turn_on(self) -> None:
         await self._write(SWITCH_REGISTER, 1)
-        await self.coordinator.async_request_refresh()
 
     async def async_turn_off(self) -> None:
         await self._write(SWITCH_REGISTER, 0)
-        await self.coordinator.async_request_refresh()
 
     async def async_set_temperature(self, **kwargs) -> None:
-        """Set target temperature for current mode."""
-        temp = kwargs.get("temperature")
+        """Set the target temperature, switching mode first when `hvac_mode` is given."""
+        hvac_mode = kwargs.get(ATTR_HVAC_MODE)
+        if hvac_mode is not None:
+            await self.async_set_hvac_mode(hvac_mode)
+            if hvac_mode == HVACMode.OFF:
+                return
+        temp = kwargs.get(ATTR_TEMPERATURE)
         register = self._setpoint_register
         if temp is None or register is None:
             return
+        reg = BY_ADDR[register]
+        if not reg.min <= temp <= reg.max:
+            raise ServiceValidationError(
+                f"{temp} is outside {reg.name} range {reg.min}-{reg.max}"
+            )
         await self._write(register, temp)
-        await self.coordinator.async_request_refresh()
