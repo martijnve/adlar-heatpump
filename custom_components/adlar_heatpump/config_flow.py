@@ -2,17 +2,24 @@
 from __future__ import annotations
 
 import logging
-import voluptuous as vol
 
+import voluptuous as vol
 from homeassistant import config_entries
 from homeassistant.const import CONF_HOST, CONF_PORT, CONF_SCAN_INTERVAL
 from homeassistant.core import callback
 
-from .const import DOMAIN, DEFAULT_PORT, DEFAULT_SLAVE, DEFAULT_SCAN_INTERVAL
+from .const import (
+    CONF_EXPERT_MODE,
+    CONF_SLAVE,
+    CONF_SLOW_INTERVAL,
+    DEFAULT_PORT,
+    DEFAULT_SCAN_INTERVAL,
+    DEFAULT_SLAVE,
+    DEFAULT_SLOW_INTERVAL,
+    DOMAIN,
+)
 
 _LOGGER = logging.getLogger(__name__)
-
-CONF_SLAVE = "slave"
 
 
 class AdlarConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
@@ -71,7 +78,7 @@ class AdlarConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
 
 class AdlarOptionsFlow(config_entries.OptionsFlow):
-    """Allow reconfiguring scan interval after setup."""
+    """Scan intervals and expert mode; saving reloads the entry."""
 
     def __init__(self, config_entry):
         self._config_entry = config_entry
@@ -80,14 +87,21 @@ class AdlarOptionsFlow(config_entries.OptionsFlow):
         if user_input is not None:
             return self.async_create_entry(title="", data=user_input)
 
+        current = {**self._config_entry.data, **self._config_entry.options}
         schema = vol.Schema(
             {
                 vol.Required(
                     CONF_SCAN_INTERVAL,
-                    default=self._config_entry.data.get(
-                        CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL
-                    ),
-                ): int,
+                    default=current.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL),
+                ): vol.All(int, vol.Range(min=10)),
+                vol.Required(
+                    CONF_SLOW_INTERVAL,
+                    default=current.get(CONF_SLOW_INTERVAL, DEFAULT_SLOW_INTERVAL),
+                ): vol.All(int, vol.Range(min=60)),
+                vol.Required(
+                    CONF_EXPERT_MODE,
+                    default=current.get(CONF_EXPERT_MODE, False),
+                ): bool,
             }
         )
         return self.async_show_form(step_id="init", data_schema=schema)

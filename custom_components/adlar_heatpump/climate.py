@@ -7,27 +7,30 @@ from homeassistant.components.climate import (
     HVACMode,
 )
 from homeassistant.components.climate.const import (
-    HVACAction,
     PRESET_BOOST,
     PRESET_ECO,
     PRESET_NONE,
+    HVACAction,
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import UnitOfTemperature
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
-from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import DOMAIN, SWITCH_REGISTER, SELECT_REGISTERS, NUMBER_REGISTERS
+from .const import DOMAIN
 from .coordinator import AdlarCoordinator
+from .entity import AdlarEntity
+from .registers import BY_ADDR, SWITCH_REGISTER
 
 # Modbus register addresses
 _MODE_REGISTER = 0x0304
 _RUNNING_MODE_REGISTER = 0x0307
-_SWITCH_REGISTER = 0x0305
 _SETPOINT_COOLING = 0x0300
 _SETPOINT_HEATING = 0x0301
+_SETPOINT_HOT_WATER = 0x0302
 _SETPOINT_FLOOR = 0x0303
+_WATER_INLET_TEMP = 0x004F
+_COMPRESSOR_FREQUENCY = 0x0040
 
 # Mapping between HA HVACMode and Modbus mode values
 _HVAC_TO_MODBUS = {
@@ -35,10 +38,17 @@ _HVAC_TO_MODBUS = {
     HVACMode.HEAT: 1,
     HVACMode.HEAT_COOL: 3,
 }
-_MODBUS_TO_HVAC = {v: k for k, v in _HVAC_TO_MODBUS.items()}
+# Every mode value, including the hot water combinations, and the setpoint it follows
+_MODBUS_TO_HVAC = {
+    0: HVACMode.COOL, 1: HVACMode.HEAT, 2: HVACMode.HEAT, 3: HVACMode.HEAT_COOL,
+    4: HVACMode.COOL, 5: HVACMode.HEAT, 7: HVACMode.HEAT_COOL,
+}
+_MODBUS_TO_SETPOINT = {
+    0: _SETPOINT_COOLING, 1: _SETPOINT_HEATING, 2: _SETPOINT_HOT_WATER, 3: _SETPOINT_FLOOR,
+    4: _SETPOINT_COOLING, 5: _SETPOINT_HEATING, 7: _SETPOINT_FLOOR,
+}
 
 # Preset modes
-PRESET_NORMAL = PRESET_NONE
 _PRESET_TO_MODBUS = {
     PRESET_NONE:  0,  # Standard
     PRESET_BOOST: 1,  # Boost
@@ -54,7 +64,7 @@ async def async_setup_entry(
     async_add_entities([AdlarClimate(coordinator)])
 
 
-class AdlarClimate(CoordinatorEntity, ClimateEntity):
+class AdlarClimate(AdlarEntity, ClimateEntity):
     """Climate entity for Adlar Aurora II."""
 
     _attr_name = "Adlar Heatpump"
@@ -62,124 +72,106 @@ class AdlarClimate(CoordinatorEntity, ClimateEntity):
     _attr_hvac_modes = [HVACMode.OFF, HVACMode.COOL, HVACMode.HEAT, HVACMode.HEAT_COOL]
     _attr_supported_features = (
         ClimateEntityFeature.TARGET_TEMPERATURE |
-        ClimateEntityFeature.PRESET_MODE
+        ClimateEntityFeature.PRESET_MODE |
+        ClimateEntityFeature.TURN_ON |
+        ClimateEntityFeature.TURN_OFF
     )
-    _attr_target_temperature_step = 1.0
     _attr_preset_modes = [PRESET_NONE, PRESET_BOOST, PRESET_ECO]
 
     def __init__(self, coordinator: AdlarCoordinator) -> None:
-        super().__init__(coordinator)
-        self._attr_unique_id = f"{coordinator.config_entry.entry_id}_climate"
+        super().__init__(coordinator, "climate")
+        self._attr_target_temperature_step = coordinator.temperature_scale
+
+    @property
+    def _mode(self) -> int | None:
+        return self.coordinator.data.get(_MODE_REGISTER)
+
+    @property
+    def _setpoint_register(self) -> int | None:
+        return _MODBUS_TO_SETPOINT.get(self._mode)
 
     @property
     def current_temperature(self) -> float | None:
-        return self.coordinator.data.get("Water Inlet Temp T6")
+        return self.coordinator.data.get(_WATER_INLET_TEMP)
 
     @property
     def hvac_mode(self) -> HVACMode:
         """Return current HVAC mode."""
-        is_on = self.coordinator.data.get("ON/OFF")
-        if not is_on:
+        if not self.coordinator.data.get(SWITCH_REGISTER):
             return HVACMode.OFF
-        mode_str = self.coordinator.data.get("Mode")
-        mode_map = {"Cooling": HVACMode.COOL, "Heating": HVACMode.HEAT, "Floor Heating": HVACMode.HEAT_COOL}
-        return mode_map.get(mode_str, HVACMode.OFF)
+        return _MODBUS_TO_HVAC.get(self._mode, HVACMode.OFF)
 
     @property
     def hvac_action(self) -> HVACAction | None:
         """Return current action based on compressor frequency."""
-        is_on = self.coordinator.data.get("ON/OFF")
-        if not is_on:
+        mode = self.hvac_mode
+        if mode == HVACMode.OFF:
             return HVACAction.OFF
-        freq = self.coordinator.data.get("Compressor Running Frequency") or 0
-        if freq > 0:
-            mode = self.hvac_mode
-            if mode == HVACMode.COOL:
-                return HVACAction.COOLING
-            elif mode in (HVACMode.HEAT, HVACMode.HEAT_COOL):
-                return HVACAction.HEATING
+        if (self.coordinator.data.get(_COMPRESSOR_FREQUENCY) or 0) > 0:
+            return HVACAction.COOLING if mode == HVACMode.COOL else HVACAction.HEATING
         return HVACAction.IDLE
 
     @property
     def target_temperature(self) -> float | None:
         """Return setpoint for current mode."""
-        mode_str = self.coordinator.data.get("Mode")
-        setpoint_map = {
-            "Cooling":       "Temp Set Cooling",
-            "Heating":       "Temp Set Heating",
-            "Floor Heating": "Temp Set Floor Heating",
-        }
-        key = setpoint_map.get(mode_str)
-        return self.coordinator.data.get(key) if key else None
+        register = self._setpoint_register
+        return self.coordinator.data.get(register) if register else None
 
     @property
     def min_temp(self) -> float:
-        mode_str = self.coordinator.data.get("Mode")
-        return 7.0 if mode_str == "Cooling" else 20.0
+        reg = BY_ADDR.get(self._setpoint_register or _SETPOINT_HEATING)
+        return float(reg.min)
 
     @property
     def max_temp(self) -> float:
-        return 25.0 if self.coordinator.data.get("Mode") == "Cooling" else 60.0
+        reg = BY_ADDR.get(self._setpoint_register or _SETPOINT_HEATING)
+        return float(reg.max)
 
     @property
     def preset_mode(self) -> str | None:
         """Return current preset (Standard/Boost/Silent)."""
-        running_mode = self.coordinator.data.get("Running Mode")
-        mode_map = {
-            "Standard Mode": PRESET_NONE,
-            "Boost":         PRESET_BOOST,
-            "Silent":        PRESET_ECO,
-        }
-        return mode_map.get(running_mode, PRESET_NONE)
+        return _MODBUS_TO_PRESET.get(
+            self.coordinator.data.get(_RUNNING_MODE_REGISTER), PRESET_NONE
+        )
+
+    async def _write(self, address: int, value: float) -> None:
+        await self.hass.async_add_executor_job(
+            self.coordinator.write_value, BY_ADDR[address], value
+        )
 
     async def async_set_preset_mode(self, preset_mode: str) -> None:
         """Set preset mode (Standard/Boost/Silent)."""
-        modbus_value = _PRESET_TO_MODBUS.get(preset_mode, 0)
-        await self.hass.async_add_executor_job(
-            self.coordinator.write_register, _RUNNING_MODE_REGISTER, modbus_value
-        )
+        await self._write(_RUNNING_MODE_REGISTER, _PRESET_TO_MODBUS.get(preset_mode, 0))
         await self.coordinator.async_request_refresh()
 
     async def async_set_hvac_mode(self, hvac_mode: HVACMode) -> None:
-        """Set HVAC mode (on/off + mode register)."""
+        """Set HVAC mode (on/off + mode register).
+
+        The mode register is left alone when the unit already runs a mode that maps to the
+        requested one, so switching back on doesn't drop a hot water combination.
+        """
         if hvac_mode == HVACMode.OFF:
-            await self.hass.async_add_executor_job(
-                self.coordinator.write_register, _SWITCH_REGISTER, 0
-            )
+            await self._write(SWITCH_REGISTER, 0)
         else:
             modbus_mode = _HVAC_TO_MODBUS.get(hvac_mode)
-            if modbus_mode is not None:
-                await self.hass.async_add_executor_job(
-                    self.coordinator.write_register, _MODE_REGISTER, modbus_mode
-                )
-            await self.hass.async_add_executor_job(
-                self.coordinator.write_register, _SWITCH_REGISTER, 1
-            )
+            if modbus_mode is not None and _MODBUS_TO_HVAC.get(self._mode) != hvac_mode:
+                await self._write(_MODE_REGISTER, modbus_mode)
+            await self._write(SWITCH_REGISTER, 1)
+        await self.coordinator.async_request_refresh()
+
+    async def async_turn_on(self) -> None:
+        await self._write(SWITCH_REGISTER, 1)
+        await self.coordinator.async_request_refresh()
+
+    async def async_turn_off(self) -> None:
+        await self._write(SWITCH_REGISTER, 0)
         await self.coordinator.async_request_refresh()
 
     async def async_set_temperature(self, **kwargs) -> None:
         """Set target temperature for current mode."""
         temp = kwargs.get("temperature")
-        if temp is None:
+        register = self._setpoint_register
+        if temp is None or register is None:
             return
-        mode_str = self.coordinator.data.get("Mode")
-        setpoint_register_map = {
-            "Cooling":       _SETPOINT_COOLING,
-            "Heating":       _SETPOINT_HEATING,
-            "Floor Heating": _SETPOINT_FLOOR,
-        }
-        register = setpoint_register_map.get(mode_str)
-        if register is not None:
-            await self.hass.async_add_executor_job(
-                self.coordinator.write_register, register, int(temp)
-            )
+        await self._write(register, temp)
         await self.coordinator.async_request_refresh()
-
-    @property
-    def device_info(self):
-        return {
-            "identifiers": {(DOMAIN, self.coordinator.config_entry.entry_id)},
-            "name": "Adlar Aurora II Heatpump",
-            "manufacturer": "Adlar",
-            "model": "Aurora II",
-        }

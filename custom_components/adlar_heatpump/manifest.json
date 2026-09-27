@@ -1,11 +1,14 @@
 {
   "domain": "adlar_heatpump",
   "name": "Adlar Heatpump (Aurora II)",
-  "version": "1.4.1",
-  "documentation": "https://github.com/conradhagemans/adlar-heatpump",
-  "issue_tracker": "https://github.com/conradhagemans/adlar-heatpump/issues",
+  "version": "1.5.0",
+  "documentation": "https://github.com/martijnve/adlar-heatpump",
+  "issue_tracker": "https://github.com/martijnve/adlar-heatpump/issues",
   "dependencies": [],
-  "codeowners": ["@conradhagemans"],
+  "codeowners": [
+    "@conradhagemans",
+    "@martijnve"
+  ],
   "requirements": [],
   "iot_class": "local_polling",
   "config_flow": true

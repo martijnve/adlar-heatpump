@@ -9,33 +9,52 @@ from homeassistant.components.sensor import (
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
-from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import DOMAIN, SENSOR_REGISTERS
+from .const import CONF_EXPERT_MODE, DOMAIN
 from .coordinator import AdlarCoordinator
+from .entity import AdlarEntity, AdlarRegisterEntity
+from .registers import (
+    CONTROL,
+    PARAM,
+    REFRIGERANT_REGISTER,
+    REFRIGERANT_TYPES,
+    REGISTERS,
+    SENSOR,
+    R,
+    is_writable,
+)
 
+DEVICE_CLASS_BY_UNIT = {
+    "°C": SensorDeviceClass.TEMPERATURE,
+    "Hz": SensorDeviceClass.FREQUENCY,
+    "V": SensorDeviceClass.VOLTAGE,
+    "A": SensorDeviceClass.CURRENT,
+    "W": SensorDeviceClass.POWER,
+    "kW": SensorDeviceClass.POWER,
+    "kWh": SensorDeviceClass.ENERGY,
+    "L/min": SensorDeviceClass.VOLUME_FLOW_RATE,
+    "s": SensorDeviceClass.DURATION,
+    "min": SensorDeviceClass.DURATION,
+    "d": SensorDeviceClass.DURATION,
+}
+# Units the register map spells differently from Home Assistant
+HA_UNIT = {"RPM": "rpm", "days": "d"}
 
-def _safe_device_class(name: str | None):
-    if name is None:
-        return None
-    try:
-        return SensorDeviceClass(name)
-    except ValueError:
-        return None
+# Encoded as major*100 + minor*10 + patch (433 = V4.3.3)
+VERSION_REGISTERS = (0x0360, 0x0363)
 
 
 async def async_setup_entry(
     hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback
 ) -> None:
     coordinator: AdlarCoordinator = hass.data[DOMAIN][entry.entry_id]
+    expert = entry.options.get(CONF_EXPERT_MODE, False)
 
-    entities = [
-        AdlarSensor(coordinator, address, name, unit, device_class)
-        for address, name, unit, device_class, scale, signed in SENSOR_REGISTERS
+    entities: list[SensorEntity] = [
+        AdlarSensor(coordinator, reg)
+        for reg in REGISTERS
+        if reg.group != CONTROL and not (reg.group == PARAM and is_writable(reg, expert))
     ]
-    # Energy: state_class=TOTAL zodat HA dalingen (bijv. na reset) correct afhandelt
-    entities.append(AdlarEnergySensor(coordinator))
-    entities.append(AdlarSensor(coordinator, 0x0027, "Compressor Target Frequency", "Hz", "frequency"))
     entities.append(AdlarThermalPowerSensor(coordinator))
     entities.append(AdlarCOPSensor(coordinator))
     entities.append(AdlarCalculatedPowerSensor(coordinator))
@@ -44,195 +63,123 @@ async def async_setup_entry(
     async_add_entities(entities)
 
 
-class AdlarSensor(CoordinatorEntity, SensorEntity):
-    def __init__(self, coordinator, address, name, unit, device_class):
-        super().__init__(coordinator)
-        self._attr_unique_id = f"{coordinator.config_entry.entry_id}_{address:04X}"
-        self._attr_name = name
-        self._attr_native_unit_of_measurement = unit
-        self._attr_device_class = _safe_device_class(device_class)
-        self._attr_state_class = SensorStateClass.MEASUREMENT
-        self._key = name
+class AdlarSensor(AdlarRegisterEntity, SensorEntity):
+    """Read-only view of one register."""
+
+    def __init__(self, coordinator: AdlarCoordinator, reg: R) -> None:
+        super().__init__(coordinator, reg, f"{reg.addr:04X}")
+        unit = HA_UNIT.get(reg.unit, reg.unit)
+        if reg.options is not None:
+            self._attr_device_class = SensorDeviceClass.ENUM
+            self._attr_options = list(reg.options.values())
+        elif reg.addr in VERSION_REGISTERS:
+            pass
+        else:
+            self._attr_native_unit_of_measurement = unit
+            self._attr_device_class = DEVICE_CLASS_BY_UNIT.get(unit)
+            if reg.unit == "kWh":
+                # TOTAL so HA treats a drop (counter reset) as a reset, not an error
+                self._attr_state_class = SensorStateClass.TOTAL
+                self._attr_icon = "mdi:counter"
+            elif reg.group == SENSOR:
+                self._attr_state_class = SensorStateClass.MEASUREMENT
 
     @property
     def native_value(self):
-        return self.coordinator.data.get(self._key)
-
-    @property
-    def device_info(self):
-        return {
-            "identifiers": {(DOMAIN, self.coordinator.config_entry.entry_id)},
-            "name": "Adlar Aurora II Heatpump",
-            "manufacturer": "Adlar",
-            "model": "Aurora II",
-        }
+        value = self._raw_value
+        if value is None:
+            return None
+        if self._reg.options is not None:
+            return self._reg.options.get(value)
+        if self._reg.addr in VERSION_REGISTERS:
+            return f"{value // 100}.{value // 10 % 10}.{value % 10}"
+        return value
 
 
-class AdlarEnergySensor(CoordinatorEntity, SensorEntity):
-    """Totaal energieverbruik sensor.
-
-    Gebruikt state_class=TOTAL zodat Home Assistant een daling (bijv. na reset
-    van de interne teller) correct interpreteert als een reset en niet als fout.
-    """
-
-    def __init__(self, coordinator):
-        super().__init__(coordinator)
-        self._attr_unique_id = f"{coordinator.config_entry.entry_id}_005D"
-        self._attr_name = "Unit Power Consumption"
-        self._attr_native_unit_of_measurement = "kWh"
-        self._attr_device_class = SensorDeviceClass.ENERGY
-        self._attr_state_class = SensorStateClass.TOTAL
-        self._attr_icon = "mdi:counter"
-
-    @property
-    def native_value(self):
-        return self.coordinator.data.get("Unit Power Consumption")
-
-    @property
-    def device_info(self):
-        return {
-            "identifiers": {(DOMAIN, self.coordinator.config_entry.entry_id)},
-            "name": "Adlar Aurora II Heatpump",
-            "manufacturer": "Adlar",
-            "model": "Aurora II",
-        }
-
-
-class AdlarThermalPowerSensor(CoordinatorEntity, SensorEntity):
+class AdlarThermalPowerSensor(AdlarEntity, SensorEntity):
     """Thermal power output calculated from flow and delta-T."""
 
-    def __init__(self, coordinator):
-        super().__init__(coordinator)
-        self._attr_unique_id = f"{coordinator.config_entry.entry_id}_thermal_power"
-        self._attr_name = "Thermal Power"
-        self._attr_native_unit_of_measurement = "kW"
-        self._attr_device_class = SensorDeviceClass.POWER
-        self._attr_state_class = SensorStateClass.MEASUREMENT
-        self._attr_icon = "mdi:heat-wave"
+    _attr_name = "Thermal Power"
+    _attr_native_unit_of_measurement = "kW"
+    _attr_device_class = SensorDeviceClass.POWER
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_icon = "mdi:heat-wave"
+
+    def __init__(self, coordinator: AdlarCoordinator) -> None:
+        super().__init__(coordinator, "thermal_power")
 
     @property
     def native_value(self) -> float | None:
-        data = self.coordinator.data
-        try:
-            flow = float(data.get("Water Flow") or 0)
-            t_in = float(data.get("Water Inlet Temp T6") or 0)
-            t_out = float(data.get("Water Outlet Temp T7") or 0)
-            delta_t = t_out - t_in
-            thermal_kw = flow * delta_t * 4.186 / 60
-            return round(thermal_kw, 2)
-        except (TypeError, ValueError):
-            return None
-
-    @property
-    def device_info(self):
-        return {
-            "identifiers": {(DOMAIN, self.coordinator.config_entry.entry_id)},
-            "name": "Adlar Aurora II Heatpump",
-            "manufacturer": "Adlar",
-            "model": "Aurora II",
-        }
+        return thermal_power(self.coordinator.data)
 
 
-class AdlarCOPSensor(CoordinatorEntity, SensorEntity):
+class AdlarCOPSensor(AdlarEntity, SensorEntity):
     """COP = Thermal Power / Electrical Power."""
 
-    def __init__(self, coordinator):
-        super().__init__(coordinator)
-        self._attr_unique_id = f"{coordinator.config_entry.entry_id}_cop"
-        self._attr_name = "COP"
-        self._attr_native_unit_of_measurement = None
-        self._attr_device_class = None
-        self._attr_state_class = SensorStateClass.MEASUREMENT
-        self._attr_icon = "mdi:lightning-bolt-circle"
+    _attr_name = "COP"
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_icon = "mdi:lightning-bolt-circle"
+
+    def __init__(self, coordinator: AdlarCoordinator) -> None:
+        super().__init__(coordinator, "cop")
 
     @property
     def native_value(self) -> float | None:
-        data = self.coordinator.data
-        try:
-            flow = float(data.get("Water Flow") or 0)
-            t_in = float(data.get("Water Inlet Temp T6") or 0)
-            t_out = float(data.get("Water Outlet Temp T7") or 0)
-            electrical_kw = float(data.get("Unit Input Power") or 0)
-            if electrical_kw <= 0:
-                return None
-            delta_t = t_out - t_in
-            thermal_kw = flow * delta_t * 4.186 / 60
-            return round(thermal_kw / electrical_kw, 2)
-        except (TypeError, ValueError):
+        thermal_kw = thermal_power(self.coordinator.data)
+        electrical_kw = self.coordinator.data.get(0x005C) or 0
+        if thermal_kw is None or electrical_kw <= 0:
             return None
-
-    @property
-    def device_info(self):
-        return {
-            "identifiers": {(DOMAIN, self.coordinator.config_entry.entry_id)},
-            "name": "Adlar Aurora II Heatpump",
-            "manufacturer": "Adlar",
-            "model": "Aurora II",
-        }
+        return round(thermal_kw / electrical_kw, 2)
 
 
-class AdlarCalculatedPowerSensor(CoordinatorEntity, SensorEntity):
-    """Estimated power = Supply Voltage x Compressor Current Draw."""
+class AdlarCalculatedPowerSensor(AdlarEntity, SensorEntity):
+    """Estimated power = AC input voltage × calibrated AC input current."""
 
-    def __init__(self, coordinator):
-        super().__init__(coordinator)
-        self._attr_unique_id = f"{coordinator.config_entry.entry_id}_calculated_power"
-        self._attr_name = "Calculated Power"
-        self._attr_native_unit_of_measurement = "W"
-        self._attr_device_class = SensorDeviceClass.POWER
-        self._attr_state_class = SensorStateClass.MEASUREMENT
-        self._attr_icon = "mdi:flash"
+    _attr_name = "Calculated Power"
+    _attr_native_unit_of_measurement = "W"
+    _attr_device_class = SensorDeviceClass.POWER
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_icon = "mdi:flash"
+
+    def __init__(self, coordinator: AdlarCoordinator) -> None:
+        super().__init__(coordinator, "calculated_power")
 
     @property
     def native_value(self) -> float | None:
-        data = self.coordinator.data
-        try:
-            voltage = float(data.get("Supply Line Voltage") or 0)
-            current = float(data.get("Compressor Current Draw") or 0)
-            if voltage <= 0:
-                return None
-            return round(voltage * current, 1)
-        except (TypeError, ValueError):
+        voltage = self.coordinator.data.get(0x0044) or 0
+        current = self.coordinator.data.get(0x0045)
+        if voltage <= 0 or current is None:
             return None
-
-    @property
-    def device_info(self):
-        return {
-            "identifiers": {(DOMAIN, self.coordinator.config_entry.entry_id)},
-            "name": "Adlar Aurora II Heatpump",
-            "manufacturer": "Adlar",
-            "model": "Aurora II",
-        }
+        return round(voltage * current, 1)
 
 
-class AdlarRefrigerantSensor(CoordinatorEntity, SensorEntity):
+class AdlarRefrigerantSensor(AdlarEntity, SensorEntity):
     """Koelmiddeltype sensor — toont R32/R290/R410A op basis van P119 (0x0177)."""
 
-    def __init__(self, coordinator):
-        super().__init__(coordinator)
-        self._attr_unique_id = f"{coordinator.config_entry.entry_id}_refrigerant_type"
-        self._attr_name = "Refrigerant Type"
-        self._attr_native_unit_of_measurement = None
-        self._attr_device_class = None
-        self._attr_state_class = None
-        self._attr_icon = "mdi:molecule"
+    _attr_name = "Refrigerant Type"
+    _attr_icon = "mdi:molecule"
+
+    def __init__(self, coordinator: AdlarCoordinator) -> None:
+        super().__init__(coordinator, "refrigerant_type")
 
     @property
     def native_value(self):
-        return self.coordinator.data.get("Refrigerant Type")
+        raw = self.coordinator.refrigerant_type
+        if raw is None:
+            return "Unknown"
+        return REFRIGERANT_TYPES.get(raw, f"Unknown ({raw})")
 
     @property
     def extra_state_attributes(self):
         return {
-            "temperature_scale": self.coordinator.data.get("Temperature Scale"),
-            "p119_register": "0x0177",
+            "temperature_scale": self.coordinator.temperature_scale,
+            "p119_register": f"0x{REFRIGERANT_REGISTER:04X}",
         }
 
-    @property
-    def device_info(self):
-        return {
-            "identifiers": {(DOMAIN, self.coordinator.config_entry.entry_id)},
-            "name": "Adlar Aurora II Heatpump",
-            "manufacturer": "Adlar",
-            "model": "Aurora II",
-        }
+
+def thermal_power(data: dict) -> float | None:
+    """kW from water flow (L/min) and outlet minus inlet temperature."""
+    flow, t_in, t_out = data.get(0x0058), data.get(0x004F), data.get(0x0050)
+    if flow is None or t_in is None or t_out is None:
+        return None
+    return round(flow * (t_out - t_in) * 4.186 / 60, 2)

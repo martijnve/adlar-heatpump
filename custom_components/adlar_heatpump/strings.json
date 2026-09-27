@@ -19,8 +19,12 @@
   "options": {
     "step": {
       "init": {
+        "title": "Adlar Heatpump options",
+        "description": "Expert mode makes the P/L installer parameters writable. Wrong values for protection, valve or frequency parameters can damage the heat pump; only change what you understand.",
         "data": {
-          "scan_interval": "Scan interval (seconds)"
+          "scan_interval": "Scan interval (seconds)",
+          "slow_interval": "Parameter read interval (seconds)",
+          "expert_mode": "Expert mode: writable installer parameters"
         }
       }
     }
