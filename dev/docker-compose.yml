@@ -1,0 +1,34 @@
+# Dev Home Assistant with this integration, plus a Modbus simulator of the heat pump.
+#   docker compose -f dev/docker-compose.yml up -d   → http://localhost:8124
+# The integration is bind-mounted from the checkout: restart HA after a code change.
+# In HA, add "Adlar Heatpump" with host `modbus-sim`, port 502 (simulator), or the real
+# gateway's address once it answers on port 502.
+name: adlar-dev
+
+services:
+  homeassistant:
+    image: ghcr.io/home-assistant/home-assistant:stable
+    restart: unless-stopped
+    ports:
+      - "8124:8123"
+    environment:
+      TZ: Europe/Amsterdam
+    volumes:
+      - ./ha-config:/config
+      - ../custom_components/adlar_heatpump:/config/custom_components/adlar_heatpump:ro
+    depends_on:
+      - modbus-sim
+
+  modbus-sim:
+    build:
+      context: .
+      dockerfile_inline: |
+        FROM python:3.12-slim
+        RUN pip install --no-cache-dir pymodbus==3.15.0
+    restart: unless-stopped
+    command: ["python", "/sim/simulator.py"]
+    ports:
+      - "127.0.0.1:5020:502"
+    volumes:
+      - ./simulator.py:/sim/simulator.py:ro
+      - ../tests/fixtures:/fixtures:ro

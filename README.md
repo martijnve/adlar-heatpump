@@ -119,6 +119,13 @@ Addresses are PDU addresses as sent on the wire (`0x004A` = 74). No offset is ap
 
 ---
 
+## Development
+
+- `devbox run test` runs the tests (creates `.venv` from `requirements_test.txt` on first use); `devbox run lint` runs ruff.
+- `docker compose -f dev/docker-compose.yml up -d` starts a Home Assistant on http://localhost:8124 with this integration bind-mounted from the checkout, plus a Modbus TCP simulator (`dev/simulator.py`) serving the reference snapshot. Add the integration with host `modbus-sim`, port `502`. Restart the HA container after a code change.
+
+---
+
 ## Disclaimer
 
 This integration is community-developed and not affiliated with Adlår. Use at your own risk. Incorrect writes to control registers could affect heat pump operation. Always verify setpoints before applying changes.
