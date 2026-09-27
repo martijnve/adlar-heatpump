@@ -63,7 +63,7 @@ Copy the `custom_components/adlar_heatpump/` folder into your HA `config/custom_
    - **IP address** of your RS485-TCP gateway
    - **Port** (default `502`)
    - **Slave ID** (default `1`)
-   - **Scan interval** in seconds (default `60`)
+   - **Scan interval** in seconds (default `600`)
 
 Scan interval, parameter read interval and expert mode can be changed later under **Configure**.
 
@@ -106,7 +106,7 @@ Left out on purpose: the Unit Control bitmask `0x0330` (FC06 twin of the command
 ### Polling
 - Registers are read in blocks of up to 32 contiguous addresses (FC03) and coils in contiguous FC01 blocks, so a poll takes about 13 requests instead of about 45. Coils are skipped on controllers with protocol version below 130.
 - A request that times out or is rejected only makes that block unknown for this poll; the entities go unavailable only when the gateway can't be reached or nothing answers.
-- Measurements, status and controls are read every scan interval (default 60 s). Parameters, limits and version info are read every *parameter read interval* (default 600 s); a value you write shows immediately.
+- Measurements, status and controls are read every scan interval; parameters, limits and version info every *parameter read interval*. Both default to 600 s, to keep the load on the RS485 bus low (it is shared with the JAN controller). A value you write shows immediately, without waiting for the next poll.
 - If the controller rejects a block, its registers are read one by one. Addresses it doesn't implement are skipped from then on.
 
 ### Scaling

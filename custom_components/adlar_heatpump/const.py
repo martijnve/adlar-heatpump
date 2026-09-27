@@ -6,7 +6,8 @@ The register map lives in registers.py.
 DOMAIN = "adlar_heatpump"
 DEFAULT_PORT = 502
 DEFAULT_SLAVE = 1
-DEFAULT_SCAN_INTERVAL = 60
+# Every 10 minutes by default, to keep the load on the shared RS485 bus low
+DEFAULT_SCAN_INTERVAL = 600
 
 CONF_SLAVE = "slave"
 # Seconds between reads of the slow tier (P/L parameters, limits, version info)

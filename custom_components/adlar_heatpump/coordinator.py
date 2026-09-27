@@ -297,7 +297,10 @@ class AdlarCoordinator(DataUpdateCoordinator):
 
     def _fetch_all(self) -> dict:
         now = time.monotonic()
-        if self._last_slow is None or now - self._last_slow >= self.slow_interval:
+        # Half a poll of slack: polls don't land exactly on the interval, and with equal
+        # intervals a strict comparison would push the slow tier to every other poll
+        slack = self.update_interval.total_seconds() / 2
+        if self._last_slow is None or now - self._last_slow >= self.slow_interval - slack:
             # Keep the previous values of a failed slow block (P119 in particular, which
             # sets the temperature scale) and retry the whole tier on the next poll
             _, failed = self._read_blocks(self._slow_blocks, self._raw, "registers", forget=False)

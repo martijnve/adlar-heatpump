@@ -199,3 +199,16 @@ def test_ac_current_calibration(coordinator):
     assert coordinator.decode(reg, 0) == 0
     # Past the curve the sensor is linear again, keeping the last offset
     assert coordinator.decode(reg, 150) == 13.0
+
+
+def test_equal_intervals_read_slow_tier_every_poll(hass, fake_client):
+    entry = MockConfigEntry(domain=DOMAIN, data={"host": "192.0.2.1"})
+    entry.add_to_hass(hass)
+    coord = AdlarCoordinator(hass, entry, "192.0.2.1", 502, 1, 600, 600)
+    coord._fetch_all()
+    # The next poll comes slightly early relative to when the slow tier was read
+    coord._last_slow -= 599
+    _client().requests.clear()
+    coord._fetch_all()
+    slow = {r.addr for r in REGISTERS if not r.fast}
+    assert any(addr in slow for _, addr, _ in _client().requests)
