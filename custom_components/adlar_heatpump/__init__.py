@@ -60,7 +60,9 @@ def _migrate_switched_entities(hass: HomeAssistant, entry: ConfigEntry) -> None:
 
     A register is a sensor when read-only and a number/select when writable. The entry of
     the platform no longer used is replaced by one for the new platform that keeps the
-    user's settings (enabled/hidden, name, icon, area, entity_id object id).
+    user's settings (hidden, name, icon, area, entity_id object id). Enabled/disabled
+    carries over only when the user changed it from the default; otherwise the new
+    platform's default applies.
     """
     expert = entry.options.get(CONF_EXPERT_MODE, False)
     registry = er.async_get(hass)
@@ -71,24 +73,39 @@ def _migrate_switched_entities(hass: HomeAssistant, entry: ConfigEntry) -> None:
         sensor = ("sensor", f"{prefix}_{reg.addr:04X}")
         writable = ("select", f"{prefix}_sel_{reg.addr:04X}") if reg.options is not None \
             else ("number", f"{prefix}_num_{reg.addr:04X}")
-        old, new = (sensor, writable) if is_writable(reg, expert) else (writable, sensor)
+        to_writable = is_writable(reg, expert)
+        old, new = (sensor, writable) if to_writable else (writable, sensor)
+        # Writable expert entities are enabled by default, read-only parameters disabled
+        new_default = None if to_writable else er.RegistryEntryDisabler.INTEGRATION
+        old_default = er.RegistryEntryDisabler.INTEGRATION if to_writable else None
+
+        new_id = registry.async_get_entity_id(new[0], DOMAIN, new[1])
         old_id = registry.async_get_entity_id(old[0], DOMAIN, old[1])
-        if old_id is None:
-            continue
-        old_entry = registry.async_get(old_id)
-        registry.async_remove(old_id)
-        if registry.async_get_entity_id(new[0], DOMAIN, new[1]):
-            continue
-        new_entry = registry.async_get_or_create(
-            new[0], DOMAIN, new[1],
-            config_entry=entry,
-            suggested_object_id=old_id.split(".", 1)[1],
-            disabled_by=old_entry.disabled_by,
-            hidden_by=old_entry.hidden_by,
-        )
-        registry.async_update_entity(
-            new_entry.entity_id,
-            name=old_entry.name,
-            icon=old_entry.icon,
-            area_id=old_entry.area_id,
-        )
+        if old_id is not None:
+            old_entry = registry.async_get(old_id)
+            registry.async_remove(old_id)
+            if new_id is None:
+                # Still at the old platform's default: take the new one; otherwise the
+                # user chose it (disabled or enabled) and it carries over
+                disabled_by = old_entry.disabled_by
+                if disabled_by == old_default:
+                    disabled_by = new_default
+                new_entry = registry.async_get_or_create(
+                    new[0], DOMAIN, new[1],
+                    config_entry=entry,
+                    suggested_object_id=old_id.split(".", 1)[1],
+                    disabled_by=disabled_by,
+                    hidden_by=old_entry.hidden_by,
+                )
+                registry.async_update_entity(
+                    new_entry.entity_id,
+                    name=old_entry.name,
+                    icon=old_entry.icon,
+                    area_id=old_entry.area_id,
+                )
+                continue
+        # Entries created disabled by the previous default (before expert entities were
+        # enabled by default) follow the current one
+        if new_id is not None and to_writable:
+            if registry.async_get(new_id).disabled_by == er.RegistryEntryDisabler.INTEGRATION:
+                registry.async_update_entity(new_id, disabled_by=None)

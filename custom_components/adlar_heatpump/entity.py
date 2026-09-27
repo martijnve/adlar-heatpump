@@ -33,7 +33,12 @@ class AdlarRegisterEntity(AdlarEntity):
         super().__init__(coordinator, unique_suffix)
         self._reg = reg
         self._attr_name = reg.name
-        self._attr_entity_registry_enabled_default = reg.enabled and reg.group != PARAM
+        # Expert-mode entities are what the user turned expert mode on for: enabled.
+        # Read-only parameters are disabled.
+        if self._writable and (reg.group == PARAM or reg.expert):
+            self._attr_entity_registry_enabled_default = True
+        else:
+            self._attr_entity_registry_enabled_default = reg.enabled and reg.group != PARAM
         secondary = reg.group in (PARAM, LIMIT, VERSION) or not reg.enabled
         if secondary and self._writable:
             self._attr_entity_category = EntityCategory.CONFIG

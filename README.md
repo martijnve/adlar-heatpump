@@ -84,7 +84,7 @@ Every register in the [HHI Modbus developer reference v2.2](https://github.com/h
 | 7 | Command coils | `0x1000`, `0x1001`, `0x1012`, `0x1013`, `0x1018`, `0x101A` | Switch: Powerful, Silent, Quick Heat, Force Defrost, Force Sterilization, Allow Water Return | Yes |
 | 8 | Limits | `0x00FA`–`0x00FF` | Sensor (diagnostic) | Yes |
 | 9 | Version info | `0x0360`–`0x0363` | Sensor (diagnostic) | Yes |
-| 10 | Installer parameters P00–P262, L11–L36 | `0x0100`–`0x0206`, `0x0800`–`0x0819` | Sensor; number/select in expert mode | No |
+| 10 | Installer parameters P00–P262, L11–L36 | `0x0100`–`0x0206`, `0x0800`–`0x0819` | Sensor; number/select in expert mode | No; yes in expert mode |
 
 Entity names and unique IDs of the upstream 1.4.x entities are unchanged, so existing dashboards and automations keep working. Two value changes when upgrading from upstream 1.4.x:
 
@@ -93,7 +93,7 @@ Entity names and unique IDs of the upstream 1.4.x entities are unchanged, so exi
 
 ### Expert mode
 
-**Settings → Devices & Services → Adlar Heatpump → Configure** has an *Expert mode* switch. With it on, the installer parameters become writable number/select entities (clamped to the documented range). With it off they are read-only sensors. DC pump control and output (`0x0343`/`0x0344`) are also writable only in expert mode: manual pump control stays in effect until set back to Auto, and a stopped pump with a running compressor can freeze the plate heat exchanger. Some parameters are never writable: P45 slave address, P114 compressors, P115 model, P119 refrigerant, P155 compressor code, P183 password, and any parameter without a documented range.
+**Settings → Devices & Services → Adlar Heatpump → Configure** has an *Expert mode* switch. With it on, the installer parameters become writable number/select entities, enabled and clamped to the documented range. With it off they are read-only sensors. DC pump control and output (`0x0343`/`0x0344`) are also writable only in expert mode: manual pump control stays in effect until set back to Auto, and a stopped pump with a running compressor can freeze the plate heat exchanger. Some parameters are never writable: P45 slave address, P114 compressors, P115 model, P119 refrigerant, P155 compressor code, P183 password, and any parameter without a documented range.
 
 > Wrong values for protection, valve or frequency parameters can damage the heat pump. Only change a parameter when you know what it does.
 

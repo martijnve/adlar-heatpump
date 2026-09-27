@@ -224,7 +224,20 @@ async def test_expert_toggle_keeps_user_settings(hass, fake_client):
     await hass.async_block_till_done()
     sensor = registry.async_get(registry.async_get_entity_id("sensor", DOMAIN, f"{ENTRY_ID}_010B"))
     assert sensor.entity_id == sensor_id
-    assert sensor.disabled_by is None and sensor.name == "HP protect"
+    assert sensor.name == "HP protect"
+
+
+async def test_expert_toggle_keeps_user_disabled(hass, fake_client):
+    entry = await _setup(hass, {CONF_EXPERT_MODE: True})
+    registry = er.async_get(hass)
+    number_id = registry.async_get_entity_id("number", DOMAIN, f"{ENTRY_ID}_num_010B")
+    registry.async_update_entity(number_id, disabled_by=er.RegistryEntryDisabler.USER)
+    hass.config_entries.async_update_entry(entry, options={CONF_EXPERT_MODE: False})
+    await hass.async_block_till_done()
+    hass.config_entries.async_update_entry(entry, options={CONF_EXPERT_MODE: True})
+    await hass.async_block_till_done()
+    number = registry.async_get(registry.async_get_entity_id("number", DOMAIN, f"{ENTRY_ID}_num_010B"))
+    assert number.disabled_by == er.RegistryEntryDisabler.USER
 
 
 async def test_unknown_option_value_is_shown(hass, fake_client):
@@ -271,3 +284,43 @@ async def test_options_flow_sets_intervals_and_expert_mode(hass, fake_client):
     # Reloaded with the options, which override the setup data
     assert coordinator.update_interval.total_seconds() == 30
     assert coordinator.slow_interval == 300
+
+
+async def test_expert_entities_enabled_by_default(hass, fake_client):
+    entry = await _setup(hass)
+    registry = er.async_get(hass)
+    hass.config_entries.async_update_entry(entry, options={CONF_EXPERT_MODE: True})
+    await hass.async_block_till_done()
+    number = registry.async_get(registry.async_get_entity_id("number", DOMAIN, f"{ENTRY_ID}_num_010B"))
+    select = registry.async_get(registry.async_get_entity_id("select", DOMAIN, f"{ENTRY_ID}_sel_011E"))
+    pump = registry.async_get(registry.async_get_entity_id("number", DOMAIN, f"{ENTRY_ID}_num_0344"))
+    assert number.disabled_by is None and select.disabled_by is None and pump.disabled_by is None
+
+    # Back to read-only: parameters disabled again, as sensors
+    hass.config_entries.async_update_entry(entry, options={CONF_EXPERT_MODE: False})
+    await hass.async_block_till_done()
+    sensor = registry.async_get(registry.async_get_entity_id("sensor", DOMAIN, f"{ENTRY_ID}_010B"))
+    assert sensor.disabled_by == er.RegistryEntryDisabler.INTEGRATION
+
+
+async def test_expert_entities_disabled_by_old_default_get_enabled(hass, fake_client):
+    registry = er.async_get(hass)
+    entry = MockConfigEntry(
+        domain=DOMAIN, entry_id=ENTRY_ID,
+        data={"host": "192.0.2.1", "port": 502, "slave": 1, "scan_interval": 60},
+        options={CONF_EXPERT_MODE: True},
+    )
+    entry.add_to_hass(hass)
+    # As created by the previous version: expert number disabled by the integration
+    registry.async_get_or_create(
+        "number", DOMAIN, f"{ENTRY_ID}_num_010B", config_entry=entry,
+        disabled_by=er.RegistryEntryDisabler.INTEGRATION,
+    )
+    registry.async_get_or_create(
+        "number", DOMAIN, f"{ENTRY_ID}_num_010C", config_entry=entry,
+        disabled_by=er.RegistryEntryDisabler.USER,
+    )
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    assert registry.async_get(registry.async_get_entity_id("number", DOMAIN, f"{ENTRY_ID}_num_010B")).disabled_by is None
+    assert registry.async_get(registry.async_get_entity_id("number", DOMAIN, f"{ENTRY_ID}_num_010C")).disabled_by == er.RegistryEntryDisabler.USER
