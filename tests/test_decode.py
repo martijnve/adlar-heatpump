@@ -219,3 +219,17 @@ def test_equal_intervals_read_slow_tier_every_poll(hass, fake_client):
     coord._fetch_all()
     slow = {r.addr for r in REGISTERS if not r.fast}
     assert any(addr in slow for _, addr, _ in _client().requests)
+
+
+def test_hiding_parameters_never_adds_requests(hass, fake_client):
+    from custom_components.adlar_heatpump.param_info import recommended_params
+
+    entry = MockConfigEntry(domain=DOMAIN, data={"host": "192.0.2.1"})
+    entry.add_to_hass(hass)
+    everything = {param_key(r): "read_only" for r in REGISTERS if is_param(r)}
+    full = AdlarCoordinator(hass, entry, "192.0.2.1", 502, 1, 600, 600, everything)
+    some = AdlarCoordinator(hass, entry, "192.0.2.1", 502, 1, 600, 600, recommended_params())
+    assert len(some._slow_blocks) <= len(full._slow_blocks)
+    # Shown parameters are still read
+    covered = {a for start, n in some._slow_blocks for a in range(start, start + n)}
+    assert {0x011A, 0x0801, 0x0177, 0x0172} <= covered

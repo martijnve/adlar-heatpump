@@ -65,6 +65,16 @@ def plan_blocks(addresses) -> list[tuple[int, int]]:
     return blocks
 
 
+def trim_blocks(blocks: list[tuple[int, int]], needed: set[int]) -> list[tuple[int, int]]:
+    """Drop blocks without a needed address; shrink the rest to their needed span."""
+    trimmed = []
+    for start, count in blocks:
+        inside = [a for a in range(start, start + count) if a in needed]
+        if inside:
+            trimmed.append((inside[0], inside[-1] - inside[0] + 1))
+    return trimmed
+
+
 class ModbusUnavailable(Exception):
     """Gateway niet bereikbaar - hele pollcyclus overslaan."""
 
@@ -112,13 +122,15 @@ class AdlarCoordinator(DataUpdateCoordinator):
         self._unsupported: set[int] = set()
         self._last_slow: float | None = None
 
-        # Hidden installer parameters aren't read at all
+        # Hidden installer parameters aren't needed, but a block costs one request however
+        # many registers it holds: blocks are planned over every known address and only
+        # blocks without a needed register are dropped
         params = params or {}
-        polled = [r for r in REGISTERS if is_shown(r, params) or r.addr in ALWAYS_POLLED]
-        fast = {r.addr for r in polled if r.fast} | set(STATUS_BLOCK)
-        slow = {r.addr for r in polled if not r.fast}
-        self._fast_blocks = plan_blocks(fast)
-        self._slow_blocks = plan_blocks(slow)
+        needed = {r.addr for r in REGISTERS if is_shown(r, params) or r.addr in ALWAYS_POLLED}
+        fast = {r.addr for r in REGISTERS if r.fast} | set(STATUS_BLOCK)
+        slow = {r.addr for r in REGISTERS if not r.fast}
+        self._fast_blocks = trim_blocks(plan_blocks(fast), needed | set(STATUS_BLOCK))
+        self._slow_blocks = trim_blocks(plan_blocks(slow), needed)
         self._coil_blocks = plan_blocks(COILS)
 
         super().__init__(
