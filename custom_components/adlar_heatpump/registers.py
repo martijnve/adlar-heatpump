@@ -158,7 +158,9 @@ REGISTERS: list[R] = [
     R(0x012D, 'P45 Modbus slave address', PARAM, min=1, max=16, protected=True),
     R(0x012E, 'P46 EVI liquid injection valve return diff', PARAM, unit='°C', min=0, max=15, delta=True),
     R(0x012F, 'P47 EVI target superheat constant', PARAM, min=0, max=12),
-    R(0x0130, 'P48 Enable DHW tank temp sensor', PARAM, min=0, max=1, options={0: 'disable', 1: 'enable'}),
+    # Adlår's manual (§8.2) says 0 = on, 1 = off; the OEM manual and HHI say 0 = disable,
+    # 1 = enable. Unresolved, so the values stay unlabelled
+    R(0x0130, 'P48 DHW tank temp sensor', PARAM, min=0, max=1, options={0: '0', 1: '1'}),
     R(0x0131, 'P49 Hot water freq running percentage', PARAM, unit='%', min=0, max=100),  # doc range excludes the reference unit's value (§3)
     R(0x0132, 'P50 Cooling target freq constant A', PARAM, min=-100, max=100),
     R(0x0133, 'P51 Cooling min freq', PARAM, unit='Hz', min=15, max=60),
@@ -261,7 +263,8 @@ REGISTERS: list[R] = [
     R(0x0194, 'P148 Cooling antifreeze temperature', PARAM, unit='°C', min=-30, max=10),
     R(0x0195, 'P149 Outlet water high limit temperature', PARAM, unit='°C', min=40, max=80),
     R(0x0196, 'P150 Secondary heating pump select', PARAM, min=0, max=3, options={0: 'power on run', 1: 'power on', 2: 'linkage demand switch', 3: 'temperature control'}),
-    R(0x0197, 'P151 Return diff - hot water heat source', PARAM, unit='°C', min=0, max=40, delta=True),
+    # Meaning per Adlår's manual (§8.2, §11.1.4); HHI: "Return diff - hot water heat source"
+    R(0x0197, 'P151 Outdoor temp for backup heating (hot water)', PARAM, unit='°C', min=0, max=40),
     R(0x0198, 'P152 Return diff - heating heat source', PARAM, unit='°C', min=0, max=40, delta=True),
     R(0x0199, 'P153 DHW heat source upper temp', PARAM, unit='°C', min=15, max=80),
     R(0x019A, 'P154 Heating heat source upper temp', PARAM, unit='°C', min=15, max=80),
@@ -273,13 +276,15 @@ REGISTERS: list[R] = [
     R(0x01A0, 'P160 Limit temperature coefficient', PARAM, min=-500, max=500),
     R(0x01A1, 'P161 Aux pump selection', PARAM, min=0, max=4, options={0: 'DHW', 1: 'AC', 2: 'floor', 3: 'AC/floor', 4: 'all'}),
     R(0x01A2, 'P162 Antifreeze DHW pipe interval', PARAM, unit='min', min=0, max=360),
-    R(0x01A3, 'P163 Min pump speed feedback', PARAM, unit='%', min=0, max=70),
+    # Adlår's manual (§8.2): minimum flow in l/min (19/30/42 per model); HHI v2.0 changed it to %
+    R(0x01A3, 'P163 Circulation pump minimum flow', PARAM, unit='L/min', min=0, max=70),
     R(0x01A4, 'P164 Energy level control', PARAM, min=0, max=3, options={0: 'all enable', 1: 'E-heat disable', 2: 'compressor disable', 3: 'all disable'}),
     R(0x01A5, 'P165 Load shedding return difference', PARAM, unit='°C', min=1, max=15, delta=True),
     R(0x01A6, 'P166 Load shedding hysteresis', PARAM, unit='°C', min=1, max=15, delta=True),
     R(0x01A7, 'P167 Load shedding emergency stop return diff', PARAM, unit='°C', min=1, max=15, delta=True),
     R(0x01A8, 'P168 Load shedding hot water start ratio', PARAM, unit='%', min=1, max=100),
-    R(0x01A9, 'P169 Load shedding non-hot water start ratio', PARAM, unit='%', min=1, max=100),
+    # Adlår's manual (§8.2): maximum compressor power; HHI: load shedding non-hot water start ratio
+    R(0x01A9, 'P169 Maximum compressor power', PARAM, unit='%', min=1, max=100),
     R(0x01AA, 'P170 Load shedding loading cycle', PARAM, unit='min', min=3, max=60),
     R(0x01AB, 'P171 Load shedding shield low voltage ambient', PARAM, unit='°C', min=-50, max=0),
     R(0x01AC, 'P172 DC fan target frequency constant c', PARAM, unit='Hz', min=40, max=70),

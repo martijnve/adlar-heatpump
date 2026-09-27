@@ -27,6 +27,46 @@ PARAM_GROUPS: list[tuple[str, str, int, int]] = [
 
 _FACTORY = "Factory setting; change only on the manufacturer's advice."
 
+# Default choice for a new setup, from Adlår's advanced user manual (Aurora II
+# bedieningshandleiding geavanceerd NL1.3): editable = what its troubleshooting (§10, §11.1)
+# tells users to change; read-only = the rest of its parameter list (§8.2) plus useful
+# context; everything else hidden.
+RECOMMENDED_EDITABLE = {
+    0x0116, 0x0197,                  # P22, P151 backup heating thresholds
+    0x0105, 0x011A, 0x0174,          # P05 link switch, P26 hysteresis, P116 inlet/outlet
+    0x0117, 0x0163, 0x0164, 0x0192,  # P23 max delta T, P99, P100, P146 pump
+    0x0204, 0x0205,                  # P260, P261 pump speeds
+    0x0103, 0x0186,                  # P03 flow switch, P134 E03 flow
+    0x0801,                          # L12 sterilisation
+}
+RECOMMENDED_READ_ONLY = {
+    0x0115, 0x0118, 0x0119, 0x011D,          # P21, P24, P25, P29
+    0x011E, 0x011F, 0x0120, 0x0123, 0x0124,  # P30–P32, P35, P36 defrost
+    0x0144, 0x0146, 0x0158, 0x0159,          # P68, P70, P88, P89 fan / silent limits
+    0x0169, 0x016A,                          # P105, P106 outdoor limits
+    0x0130, 0x01A3, 0x01A9,                  # P48, P163, P169
+    0x0125, 0x011C,                          # P37 shutdown mode, P28 pump at target
+    *range(0x016C, 0x0172),                  # P108–P113 setpoint limits
+    *range(0x0802, 0x0806),                  # L13–L16 sterilisation schedule
+    *range(0x0810, 0x0813),                  # L27–L29 own heating curve
+}
+
+
+def recommended_mode(addr: int) -> str:
+    if addr in RECOMMENDED_EDITABLE:
+        return "editable"
+    if addr in RECOMMENDED_READ_ONLY:
+        return "read_only"
+    return "hidden"
+
+
+def recommended_params() -> dict[str, str]:
+    """Options value for a new setup: the recommended non-hidden choices."""
+    return {
+        f"{addr:04X}": recommended_mode(addr)
+        for addr in sorted(RECOMMENDED_EDITABLE | RECOMMENDED_READ_ONLY)
+    }
+
 DESCRIPTIONS: dict[int, str] = {
     # --- P00–P16 ---
     0x0100: "Use the outdoor ambient temperature sensor T1.",
@@ -52,7 +92,7 @@ DESCRIPTIONS: dict[int, str] = {
     0x0113: "Heating: ambient temperature above which the fan slows down.",
     0x0114: "Heating: ambient temperature below which the fan speeds up.",
     0x0115: "Below this ambient temperature the unit doesn't start.",
-    0x0116: "Ambient temperature at or below which the electric heaters may switch on (off again at P22 + 3).",
+    0x0116: "Heating: outdoor temperature at or below which the external backup heater (boiler or electric) may help; off again at P22 + 3. Adlår: raise it if the house stays cold.",
     0x0117: "Alarm when the difference between water inlet and outlet exceeds this (E37).",
     0x0118: "Correction added to the water inlet (return, T6) temperature reading.",
     0x0119: "Correction added to the water outlet (T7) temperature reading.",
@@ -81,7 +121,7 @@ DESCRIPTIONS: dict[int, str] = {
     0x012E: "EVI liquid injection valve return difference.",
     0x012F: "EVI (vapour injection) target superheat constant.",
     # --- P48–P72 ---
-    0x0130: "Whether a domestic hot water tank sensor is fitted. Hot water mode needs it.",
+    0x0130: "Switches the hot water tank sensor on or off. Hot water mode needs it. The sources disagree on the values: Adlår's manual says 0 = on, 1 = off (default 1); the OEM manual says 0 = off, 1 = on.",
     0x0131: "Compressor frequency in hot water mode, as a percentage of its range.",
     0x0132: "Cooling: constant used to calculate the target compressor frequency.",
     0x0133: "Cooling: lowest compressor frequency.",
@@ -170,7 +210,7 @@ DESCRIPTIONS: dict[int, str] = {
     0x0183: "Cooling: lower bound of the third frequency band to skip.",
     0x0184: "Cooling: upper bound of the third frequency band to skip.",
     0x0185: "Fan driver: integrated in the main module or a separate module.",
-    0x0186: "Water flow below which the unit stops. 0 = off.",
+    0x0186: "Water flow at which error E03 is raised. 0 = off (Adlår's advice on E03).",
     0x0187: "Temperature difference at which anti-condensation starts.",
     0x0188: "Ambient temperature above which the throttle bypass valve opens.",
     0x0189: "Delay of the throttle bypass valve after compressor start.",
@@ -188,7 +228,7 @@ DESCRIPTIONS: dict[int, str] = {
     0x0195: "Highest water outlet temperature.",
     # --- P150–P183 ---
     0x0196: "Heating/cooling circuit pump (P_b): runs with the unit, is switched by a room thermostat, or by the wired controller's sensor.",
-    0x0197: "Solar/auxiliary heat source for the hot water tank: its pump starts when the source is this much warmer than the tank.",
+    0x0197: "Hot water: outdoor temperature at or below which the external backup heater may help. 0 = off (Adlår's advice on error EA3).",
     0x0198: "Solar/auxiliary heat source for the buffer tank: its pump starts when the source is this much warmer than the tank.",
     0x0199: "Highest hot water temperature from the auxiliary heat source.",
     0x019A: "Highest heating water temperature from the auxiliary heat source.",
@@ -200,13 +240,13 @@ DESCRIPTIONS: dict[int, str] = {
     0x01A0: "Coefficient of the heating water temperature limit.",
     0x01A1: "What the auxiliary pump (P_c) serves: hot water, heating/cooling, floor heating, both circuits, or unit circulation.",
     0x01A2: "Interval of the hot water pipe anti-freeze run. 0 = off.",
-    0x01A3: "Pump speed below which the flow feedback counts as too low.",
+    0x01A3: "Lowest water flow of the circulation pump. Adlår default 19 (6 kW), 30 (10 kW) or 42 (14 kW) l/min.",
     0x01A4: "Cascade / energy level control: 0 enables intelligent cascade control (P165–P170), 3 disables it.",
     0x01A5: "Cascade: return temperature difference at which the next unit is switched on.",
     0x01A6: "Cascade: return temperature difference at which a unit is switched off.",
     0x01A7: "Cascade: return temperature difference for an emergency stop.",
     0x01A8: "Cascade: share of units that may run in hot water mode.",
-    0x01A9: "Cascade: share of units that may run in heating/cooling mode.",
+    0x01A9: "Maximum compressor power, as a percentage (Adlår). In cascade setups the OEM uses it as the share of units that may run in heating/cooling.",
     0x01AA: "Cascade: time before the next unit is switched on.",
     0x01AB: "Cascade: ambient temperature below which low-voltage shielding applies.",
     0x01AC: "DC fan target frequency constant c.",

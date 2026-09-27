@@ -95,11 +95,13 @@ Entity names and unique IDs of the upstream 1.4.x entities are unchanged, so exi
 
 **Settings → Devices & Services → Adlar Heatpump → Configure** opens a menu with the polling intervals and one page per group of installer parameters (P00–P262, L11–L36, and the DC pump manual control). On each page every parameter has a short description, its range, and a choice:
 
-1. **Hidden** (default): no entity, and the value isn't read from the heat pump.
+1. **Hidden**: no entity, and the value isn't read from the heat pump.
 2. **Read-only**: a sensor that shows the value.
 3. **Editable**: a number or dropdown that writes to the heat pump, clamped to the documented range.
 
-A *Set all in this group* field applies one choice to a whole page. Finish with **Save** in the menu. Some parameters can only be hidden or read-only: P45 slave address, P114 compressors, P115 model, P119 refrigerant, P155 compressor code, P183 password, and any parameter without a documented range. Manual DC pump control stays in effect until set back to Auto, and a stopped pump with a running compressor can freeze the plate heat exchanger.
+A new setup starts with the parameters from Adlår's advanced user manual for the Aurora II (*bedieningshandleiding geavanceerd* NL1.3): the 14 its troubleshooting tells users to change (P03, P05, P22, P23, P26, P99, P100, P116, P134, P146, P151, P260, P261, L12) are editable; the rest of its parameter list and some useful context (defrost, fan and silent limits, P28, P37, setpoint limits P108–P113, sterilisation schedule, own heating curve L27–L29) read-only; everything else hidden. A *Set all in this group* field applies one choice to a whole page, including *Recommended* to go back to these defaults.
+
+Where Adlår's manual and the HHI register map disagree, the names follow Adlår: P151 is the outdoor temperature for backup heating in hot water mode, P163 the minimum pump flow in l/min, P169 the maximum compressor power. For P48 (hot water tank sensor) the two give opposite meanings for 0 and 1, so the values are left unlabelled. Finish with **Save** in the menu. Some parameters can only be hidden or read-only: P45 slave address, P114 compressors, P115 model, P119 refrigerant, P155 compressor code, P183 password, and any parameter without a documented range. Manual DC pump control stays in effect until set back to Auto, and a stopped pump with a running compressor can freeze the plate heat exchanger.
 
 Moving a parameter between read-only and editable keeps its entity ID, name, area and hidden/disabled state. The texts come from `param_info.py`; run `tools/gen_translations.py` after changing it or the register map.
 

@@ -81,7 +81,11 @@ def options_section() -> dict:
             "description": "Hidden, read-only or editable per parameter. Back in the menu, **Save** stores the choices.",
             "data": {SET_ALL: "Set all in this group", **{field_key(r): r.name for r in registers}},
             "data_description": {
-                SET_ALL: "Applies one choice to every parameter on this page; editable only where allowed.",
+                SET_ALL: (
+                    "Applies one choice to every parameter on this page; editable only where "
+                    "allowed. Recommended: editable what Adlår's advanced manual tells users to "
+                    "change, read-only the rest of its parameter list, the others hidden."
+                ),
                 **{field_key(r): help_text(r) for r in registers},
             },
         }
@@ -91,7 +95,8 @@ def options_section() -> dict:
 SELECTORS = {
     "param_mode": {"options": {"hidden": "Hidden", "read_only": "Read-only", "editable": "Editable"}},
     SET_ALL: {"options": {
-        "keep": "Choose per parameter", "hidden": "Hidden", "read_only": "Read-only", "editable": "Editable",
+        "keep": "Choose per parameter", "recommended": "Recommended (Adlår manual)",
+        "hidden": "Hidden", "read_only": "Read-only", "editable": "Editable",
     }},
 }
 

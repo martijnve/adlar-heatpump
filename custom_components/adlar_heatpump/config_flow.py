@@ -23,7 +23,7 @@ from .const import (
     DEFAULT_SLOW_INTERVAL,
     DOMAIN,
 )
-from .param_info import PARAM_GROUPS
+from .param_info import PARAM_GROUPS, recommended_mode, recommended_params
 from .registers import (
     EDITABLE,
     HIDDEN,
@@ -72,6 +72,8 @@ class AdlarConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 return self.async_create_entry(
                     title=f"Adlar Heatpump ({user_input[CONF_HOST]})",
                     data=user_input,
+                    # Start with the parameters Adlår's manual has users look at or change
+                    options={CONF_PARAMS: recommended_params()},
                 )
 
         schema = vol.Schema(
@@ -98,6 +100,7 @@ class AdlarConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
 
 KEEP = "keep"
+RECOMMENDED = "recommended"
 SET_ALL = "set_all"
 
 
@@ -157,7 +160,12 @@ class AdlarOptionsFlow(config_entries.OptionsFlow):
         if user_input is not None:
             set_all = user_input.get(SET_ALL, KEEP)
             for reg in registers:
-                mode = user_input.get(field_key(reg), HIDDEN) if set_all == KEEP else set_all
+                if set_all == KEEP:
+                    mode = user_input.get(field_key(reg), HIDDEN)
+                elif set_all == RECOMMENDED:
+                    mode = recommended_mode(reg.addr)
+                else:
+                    mode = set_all
                 if mode == EDITABLE and not can_edit(reg):
                     mode = READ_ONLY
                 self._params[param_key(reg)] = mode
@@ -165,7 +173,7 @@ class AdlarOptionsFlow(config_entries.OptionsFlow):
 
         fields: dict = {
             vol.Optional(SET_ALL, default=KEEP): SelectSelector(SelectSelectorConfig(
-                options=[KEEP, *PARAM_MODES], translation_key=SET_ALL,
+                options=[KEEP, RECOMMENDED, *PARAM_MODES], translation_key=SET_ALL,
                 mode=SelectSelectorMode.DROPDOWN,
             )),
         }

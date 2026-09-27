@@ -372,3 +372,39 @@ def test_translations_cover_every_parameter():
         for reg in group_registers(first, last):
             assert step["data"][field_key(reg)] == reg.name
             assert step["data_description"][field_key(reg)]
+
+
+async def test_new_setup_gets_recommended_params(hass, fake_client):
+    result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": "user"})
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {"host": "192.0.2.1", "port": 502, "slave": 1, "scan_interval": 600}
+    )
+    assert result["type"] == "create_entry"
+    await hass.async_block_till_done()
+    entry = hass.config_entries.async_entries(DOMAIN)[0]
+    params = entry.options[CONF_PARAMS]
+    assert params["011A"] == "editable"          # P26 hysteresis
+    assert params["0801"] == "editable"          # L12 sterilisation
+    assert params["011E"] == "read_only"         # P30 defrost mode
+    assert "010B" not in params                  # P11 protection limit: hidden
+    registry = er.async_get(hass)
+    assert registry.async_get_entity_id("number", DOMAIN, f"{entry.entry_id}_num_011A")
+    assert registry.async_get_entity_id("sensor", DOMAIN, f"{entry.entry_id}_011E")
+
+
+async def test_set_all_recommended(hass, fake_client):
+    entry = await _setup(hass, _params(reg_010b="editable"))
+    flow = hass.config_entries.options
+    result = await flow.async_init(entry.entry_id)
+    result = await flow.async_configure(result["flow_id"], {"next_step_id": "group_protection"})
+    result = await flow.async_configure(result["flow_id"], {"set_all": "recommended"})
+    result = await flow.async_configure(result["flow_id"], {"next_step_id": "save"})
+    await hass.async_block_till_done()
+    params = entry.options[CONF_PARAMS]
+    assert "010B" not in params                  # P11 back to hidden
+    assert params["0103"] == "editable" and params["0105"] == "editable"   # P03, P05
+
+
+async def test_p151_is_an_outdoor_temperature(hass, fake_client):
+    await _setup(hass, _params(reg_0197="editable"))
+    assert _entity(hass, "number", "num_0197").original_device_class == "temperature"

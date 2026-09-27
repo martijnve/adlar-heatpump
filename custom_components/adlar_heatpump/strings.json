@@ -74,7 +74,7 @@
           "reg_0110": "P16 Exhaust temp freq limit"
         },
         "data_description": {
-          "set_all": "Applies one choice to every parameter on this page; editable only where allowed.",
+          "set_all": "Applies one choice to every parameter on this page; editable only where allowed. Recommended: editable what Adlår's advanced manual tells users to change, read-only the rest of its parameter list, the others hidden.",
           "reg_0100": "Use the outdoor ambient temperature sensor T1. Values: 0 = enable, 1 = disable.",
           "reg_0101": "Use the high pressure switch (compressor protection). Values: 0 = enable, 1 = disable.",
           "reg_0102": "Use the low pressure switch (compressor protection). Values: 0 = enable, 1 = disable.",
@@ -114,13 +114,13 @@
           "reg_011d": "P29 Antifreeze pump running time"
         },
         "data_description": {
-          "set_all": "Applies one choice to every parameter on this page; editable only where allowed.",
+          "set_all": "Applies one choice to every parameter on this page; editable only where allowed. Recommended: editable what Adlår's advanced manual tells users to change, read-only the rest of its parameter list, the others hidden.",
           "reg_0111": "Cooling: ambient temperature above which the fan speeds up. Range 0–60 °C.",
           "reg_0112": "Cooling: ambient temperature below which the fan slows down. Range 0–60 °C.",
           "reg_0113": "Heating: ambient temperature above which the fan slows down. Range 0–60 °C.",
           "reg_0114": "Heating: ambient temperature below which the fan speeds up. Range 0–60 °C.",
           "reg_0115": "Below this ambient temperature the unit doesn't start. Range −40–−10 °C.",
-          "reg_0116": "Ambient temperature at or below which the electric heaters may switch on (off again at P22 + 3). Range −15–40 °C.",
+          "reg_0116": "Heating: outdoor temperature at or below which the external backup heater (boiler or electric) may help; off again at P22 + 3. Adlår: raise it if the house stays cold. Range −15–40 °C.",
           "reg_0117": "Alarm when the difference between water inlet and outlet exceeds this (E37). Range 10–30 °C.",
           "reg_0118": "Correction added to the water inlet (return, T6) temperature reading. Range −10–10 °C.",
           "reg_0119": "Correction added to the water outlet (T7) temperature reading. Range −10–10 °C.",
@@ -145,7 +145,7 @@
           "reg_0125": "P37 Shutdown mode (aka \"Darwin\")"
         },
         "data_description": {
-          "set_all": "Applies one choice to every parameter on this page; editable only where allowed.",
+          "set_all": "Applies one choice to every parameter on this page; editable only where allowed. Recommended: editable what Adlår's advanced manual tells users to change, read-only the rest of its parameter list, the others hidden.",
           "reg_011e": "How the unit decides to defrost: smart, by time, fast, or dew point. Values: 0 = smart, 1 = timing, 2 = fast, 3 = dew point.",
           "reg_011f": "Accumulated compressor run time before a defrost is considered. Range 0–120.",
           "reg_0120": "Outer coil temperature below which defrosting may start. Range −30–0 °C.",
@@ -173,7 +173,7 @@
           "reg_012f": "P47 EVI target superheat constant"
         },
         "data_description": {
-          "set_all": "Applies one choice to every parameter on this page; editable only where allowed.",
+          "set_all": "Applies one choice to every parameter on this page; editable only where allowed. Recommended: editable what Adlår's advanced manual tells users to change, read-only the rest of its parameter list, the others hidden.",
           "reg_0126": "Heating: constant for the initial opening of the main expansion valve. Range −999–999.",
           "reg_0127": "Use the refrigerant pressure sensors. Values: 0 = enable, 1 = disable.",
           "reg_0128": "Cooling: correction of the target superheat of the main expansion valve. Range −5–10 °C.",
@@ -191,7 +191,7 @@
         "description": "Hidden, read-only or editable per parameter. Back in the menu, **Save** stores the choices.",
         "data": {
           "set_all": "Set all in this group",
-          "reg_0130": "P48 Enable DHW tank temp sensor",
+          "reg_0130": "P48 DHW tank temp sensor",
           "reg_0131": "P49 Hot water freq running percentage",
           "reg_0132": "P50 Cooling target freq constant A",
           "reg_0133": "P51 Cooling min freq",
@@ -218,8 +218,8 @@
           "reg_0148": "P72 EEV enthalpy stop increase frequency"
         },
         "data_description": {
-          "set_all": "Applies one choice to every parameter on this page; editable only where allowed.",
-          "reg_0130": "Whether a domestic hot water tank sensor is fitted. Hot water mode needs it. Values: 0 = disable, 1 = enable.",
+          "set_all": "Applies one choice to every parameter on this page; editable only where allowed. Recommended: editable what Adlår's advanced manual tells users to change, read-only the rest of its parameter list, the others hidden.",
+          "reg_0130": "Switches the hot water tank sensor on or off. Hot water mode needs it. The sources disagree on the values: Adlår's manual says 0 = on, 1 = off (default 1); the OEM manual says 0 = off, 1 = on. Values: 0 = 0, 1 = 1.",
           "reg_0131": "Compressor frequency in hot water mode, as a percentage of its range. Range 0–100 %.",
           "reg_0132": "Cooling: constant used to calculate the target compressor frequency. Range −100–100.",
           "reg_0133": "Cooling: lowest compressor frequency. Range 15–60 Hz.",
@@ -275,7 +275,7 @@
           "reg_015e": "P94 EVI aux valve adjustment cycle"
         },
         "data_description": {
-          "set_all": "Applies one choice to every parameter on this page; editable only where allowed.",
+          "set_all": "Applies one choice to every parameter on this page; editable only where allowed. Recommended: editable what Adlår's advanced manual tells users to change, read-only the rest of its parameter list, the others hidden.",
           "reg_0149": "Cooling: main expansion valve opening, step 1. Range 20–480 P.",
           "reg_014a": "Cooling: main expansion valve opening, step 2. Range 20–480 P.",
           "reg_014b": "Cooling: main expansion valve opening, step 3. Range 20–480 P.",
@@ -333,7 +333,7 @@
           "reg_0178": "P120 Anti-condensation function"
         },
         "data_description": {
-          "set_all": "Applies one choice to every parameter on this page; editable only where allowed.",
+          "set_all": "Applies one choice to every parameter on this page; editable only where allowed. Recommended: editable what Adlår's advanced manual tells users to change, read-only the rest of its parameter list, the others hidden.",
           "reg_015f": "Whether the circulation pump is shared with other units or independent. Values: 0 = shared, 1 = independent.",
           "reg_0160": "Hot water hysteresis: the tank reheats when it drops this far below the setpoint. Range 0–10 °C.",
           "reg_0161": "Automatic compensation of the tank temperature reading. Values: 0 = enable, 1 = disable.",
@@ -398,7 +398,7 @@
           "reg_0195": "P149 Outlet water high limit temperature"
         },
         "data_description": {
-          "set_all": "Applies one choice to every parameter on this page; editable only where allowed.",
+          "set_all": "Applies one choice to every parameter on this page; editable only where allowed. Recommended: editable what Adlår's advanced manual tells users to change, read-only the rest of its parameter list, the others hidden.",
           "reg_0179": "Heating: lower bound of the first compressor frequency band to skip (to avoid resonance). 0 = off. Range 0–120 Hz.",
           "reg_017a": "Heating: upper bound of the first frequency band to skip. Range 0–120 Hz.",
           "reg_017b": "Heating: lower bound of the second frequency band to skip. Range 0–120 Hz.",
@@ -412,7 +412,7 @@
           "reg_0183": "Cooling: lower bound of the third frequency band to skip. Range 0–120 Hz.",
           "reg_0184": "Cooling: upper bound of the third frequency band to skip. Range 0–120 Hz.",
           "reg_0185": "Fan driver: integrated in the main module or a separate module. Values: 0 = integral module, 1 = individual module.",
-          "reg_0186": "Water flow below which the unit stops. 0 = off. Range 0–100 L/min.",
+          "reg_0186": "Water flow at which error E03 is raised. 0 = off (Adlår's advice on E03). Range 0–100 L/min.",
           "reg_0187": "Temperature difference at which anti-condensation starts. Range 0–50 °C.",
           "reg_0188": "Ambient temperature above which the throttle bypass valve opens. Range −20–50 °C.",
           "reg_0189": "Delay of the throttle bypass valve after compressor start. Range 0–999 s.",
@@ -436,7 +436,7 @@
         "data": {
           "set_all": "Set all in this group",
           "reg_0196": "P150 Secondary heating pump select",
-          "reg_0197": "P151 Return diff - hot water heat source",
+          "reg_0197": "P151 Outdoor temp for backup heating (hot water)",
           "reg_0198": "P152 Return diff - heating heat source",
           "reg_0199": "P153 DHW heat source upper temp",
           "reg_019a": "P154 Heating heat source upper temp",
@@ -448,13 +448,13 @@
           "reg_01a0": "P160 Limit temperature coefficient",
           "reg_01a1": "P161 Aux pump selection",
           "reg_01a2": "P162 Antifreeze DHW pipe interval",
-          "reg_01a3": "P163 Min pump speed feedback",
+          "reg_01a3": "P163 Circulation pump minimum flow",
           "reg_01a4": "P164 Energy level control",
           "reg_01a5": "P165 Load shedding return difference",
           "reg_01a6": "P166 Load shedding hysteresis",
           "reg_01a7": "P167 Load shedding emergency stop return diff",
           "reg_01a8": "P168 Load shedding hot water start ratio",
-          "reg_01a9": "P169 Load shedding non-hot water start ratio",
+          "reg_01a9": "P169 Maximum compressor power",
           "reg_01aa": "P170 Load shedding loading cycle",
           "reg_01ab": "P171 Load shedding shield low voltage ambient",
           "reg_01ac": "P172 DC fan target frequency constant c",
@@ -471,9 +471,9 @@
           "reg_01b7": "P183 Parameter password"
         },
         "data_description": {
-          "set_all": "Applies one choice to every parameter on this page; editable only where allowed.",
+          "set_all": "Applies one choice to every parameter on this page; editable only where allowed. Recommended: editable what Adlår's advanced manual tells users to change, read-only the rest of its parameter list, the others hidden.",
           "reg_0196": "Heating/cooling circuit pump (P_b): runs with the unit, is switched by a room thermostat, or by the wired controller's sensor. Values: 0 = power on run, 1 = power on, 2 = linkage demand switch, 3 = temperature control.",
-          "reg_0197": "Solar/auxiliary heat source for the hot water tank: its pump starts when the source is this much warmer than the tank. Range 0–40 °C.",
+          "reg_0197": "Hot water: outdoor temperature at or below which the external backup heater may help. 0 = off (Adlår's advice on error EA3). Range 0–40 °C.",
           "reg_0198": "Solar/auxiliary heat source for the buffer tank: its pump starts when the source is this much warmer than the tank. Range 0–40 °C.",
           "reg_0199": "Highest hot water temperature from the auxiliary heat source. Range 15–80 °C.",
           "reg_019a": "Highest heating water temperature from the auxiliary heat source. Range 15–80 °C.",
@@ -485,13 +485,13 @@
           "reg_01a0": "Coefficient of the heating water temperature limit. Range −500–500.",
           "reg_01a1": "What the auxiliary pump (P_c) serves: hot water, heating/cooling, floor heating, both circuits, or unit circulation. Values: 0 = DHW, 1 = AC, 2 = floor, 3 = AC/floor, 4 = all.",
           "reg_01a2": "Interval of the hot water pipe anti-freeze run. 0 = off. Range 0–360 min.",
-          "reg_01a3": "Pump speed below which the flow feedback counts as too low. Range 0–70 %.",
+          "reg_01a3": "Lowest water flow of the circulation pump. Adlår default 19 (6 kW), 30 (10 kW) or 42 (14 kW) l/min. Range 0–70 L/min.",
           "reg_01a4": "Cascade / energy level control: 0 enables intelligent cascade control (P165–P170), 3 disables it. Values: 0 = all enable, 1 = E-heat disable, 2 = compressor disable, 3 = all disable.",
           "reg_01a5": "Cascade: return temperature difference at which the next unit is switched on. Range 1–15 °C.",
           "reg_01a6": "Cascade: return temperature difference at which a unit is switched off. Range 1–15 °C.",
           "reg_01a7": "Cascade: return temperature difference for an emergency stop. Range 1–15 °C.",
           "reg_01a8": "Cascade: share of units that may run in hot water mode. Range 1–100 %.",
-          "reg_01a9": "Cascade: share of units that may run in heating/cooling mode. Range 1–100 %.",
+          "reg_01a9": "Maximum compressor power, as a percentage (Adlår). In cascade setups the OEM uses it as the share of units that may run in heating/cooling. Range 1–100 %.",
           "reg_01aa": "Cascade: time before the next unit is switched on. Range 3–60 min.",
           "reg_01ab": "Cascade: ambient temperature below which low-voltage shielding applies. Range −50–0 °C.",
           "reg_01ac": "DC fan target frequency constant c. Range 40–70 Hz.",
@@ -585,7 +585,7 @@
           "reg_01fd": "P253 Working cond PFC turn-on current"
         },
         "data_description": {
-          "set_all": "Applies one choice to every parameter on this page; editable only where allowed.",
+          "set_all": "Applies one choice to every parameter on this page; editable only where allowed. Recommended: editable what Adlår's advanced manual tells users to change, read-only the rest of its parameter list, the others hidden.",
           "reg_01b8": "Factory calibration: compressor frequency at test point 35D (35 °C water). Factory setting; change only on the manufacturer's advice. Range 0–120 Hz.",
           "reg_01b9": "Factory calibration: compressor frequency at test point 35C (35 °C water). Factory setting; change only on the manufacturer's advice. Range 0–120 Hz.",
           "reg_01ba": "Factory calibration: compressor frequency at test point 35B (35 °C water). Factory setting; change only on the manufacturer's advice. Range 0–120 Hz.",
@@ -674,7 +674,7 @@
           "reg_0206": "P262 Floor heating test mode selection"
         },
         "data_description": {
-          "set_all": "Applies one choice to every parameter on this page; editable only where allowed.",
+          "set_all": "Applies one choice to every parameter on this page; editable only where allowed. Recommended: editable what Adlår's advanced manual tells users to change, read-only the rest of its parameter list, the others hidden.",
           "reg_01fe": "Heating medium in the system: water or antifreeze liquid. Values: 0 = water, 1 = antifreeze liquid.",
           "reg_01ff": "SG Ready (smart grid) input. Note: 0 enables, 1 disables. Values: 0 = enable, 1 = disable.",
           "reg_0200": "SG Ready: minutes before the unit turns off in the grid's ECO state. Range 30–999 min.",
@@ -719,7 +719,7 @@
           "reg_0819": "L36 External water pump power"
         },
         "data_description": {
-          "set_all": "Applies one choice to every parameter on this page; editable only where allowed.",
+          "set_all": "Applies one choice to every parameter on this page; editable only where allowed. Recommended: editable what Adlår's advanced manual tells users to change, read-only the rest of its parameter list, the others hidden.",
           "reg_0800": "Cycle of the electric pipe heating. Range 1–300 min.",
           "reg_0801": "Legionella sterilisation of the hot water tank: automatic every L13 days at L14, off, or started by hand. Values: 0 = auto, 1 = off, 2 = manual.",
           "reg_0802": "Days between two sterilisation runs. Range 5–30 days.",
@@ -757,7 +757,7 @@
           "reg_0344": "DC Pump Output"
         },
         "data_description": {
-          "set_all": "Applies one choice to every parameter on this page; editable only where allowed.",
+          "set_all": "Applies one choice to every parameter on this page; editable only where allowed. Recommended: editable what Adlår's advanced manual tells users to change, read-only the rest of its parameter list, the others hidden.",
           "reg_0343": "Auto or manual control of the DC circulation pump. Manual stays on until set back to Auto. Values: 0 = Auto, 1 = Manual.",
           "reg_0344": "Pump speed while DC pump control is manual. Too little flow with a running compressor can freeze the plate heat exchanger. Range 20–100 %."
         }
@@ -775,6 +775,7 @@
     "set_all": {
       "options": {
         "keep": "Choose per parameter",
+        "recommended": "Recommended (Adlår manual)",
         "hidden": "Hidden",
         "read_only": "Read-only",
         "editable": "Editable"
