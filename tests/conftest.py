@@ -6,11 +6,18 @@ from pathlib import Path
 from typing import ClassVar
 from unittest.mock import patch
 
+import pycares
 import pytest
 
 from custom_components.adlar_heatpump import coordinator as coordinator_module
 
 FIXTURE = Path(__file__).parent / "fixtures" / "snapshot_2026-06-15.json"
+
+# pycares 5 starts one daemon thread with its first DNS channel and keeps it. This test
+# harness (Home Assistant 2025.1) fails a test that leaves a new thread behind, so the
+# first test with a websocket client would fail; started here, the thread predates them all
+if manager := getattr(pycares, "_shutdown_manager", None):
+    manager.start()
 
 
 def load_snapshot() -> tuple[dict[int, int], dict[int, bool]]:
@@ -47,12 +54,14 @@ class FakeModbusClient:
             self.registers, self.coils = previous.registers, previous.coils
             self.reject, self.fail_at = previous.reject, previous.fail_at
             self.fail_all, self.reject_coils = previous.fail_all, previous.reject_coils
+            self.keeps = previous.keeps
         else:
             self.registers, self.coils = load_snapshot()
             self.reject: dict[int, int] = {}      # address -> exception code
             self.fail_at: set[int] = set()        # block start addresses that time out
             self.fail_all = False
             self.reject_coils: int | None = None  # exception code for every FC01
+            self.keeps: dict[int, int] = {}       # address -> value kept whatever is written
         self.connected = False
         self.requests: list[tuple[str, int, int]] = []
         self.writes: list[tuple[str, int, object]] = []
@@ -91,7 +100,7 @@ class FakeModbusClient:
             return _Response(exception_code=self.reject[address])
         if address not in self.registers:
             return _Response(exception_code=2)
-        self.registers[address] = value
+        self.registers[address] = self.keeps.get(address, value)
         return _Response()
 
     def write_coil(self, address, *, value, device_id=1):

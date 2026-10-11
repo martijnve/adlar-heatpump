@@ -15,6 +15,10 @@ CONF_SLOW_INTERVAL = "slow_interval"
 DEFAULT_SLOW_INTERVAL = 600
 # Per installer parameter shown as a sensor ("0100": "read_only"; missing = hidden)
 CONF_PARAMS = "params"
+# Keys of the installer parameters the set_parameter service may write (["0163", ...])
+CONF_AUTOMATION_PARAMS = "automation_params"
+# Fired after every write of an installer parameter; shown in the logbook of the device
+EVENT_PARAMETER_WRITTEN = f"{DOMAIN}_parameter_written"
 # Replaced by CONF_PARAMS in config entry version 1.2; read only to migrate
 CONF_EXPERT_MODE = "expert_mode"
 

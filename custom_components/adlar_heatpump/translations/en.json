@@ -30,5 +30,25 @@
         }
       }
     }
+  },
+  "services": {
+    "set_parameter": {
+      "name": "Set installer parameter",
+      "description": "Writes one installer parameter of the heat pump, for automations. Only parameters ticked \"Allow automations\" in the Heat pump parameters panel can be written. The value is read back and the write is logged in the logbook.",
+      "fields": {
+        "device_id": {
+          "name": "Heat pump",
+          "description": "The heat pump to write to."
+        },
+        "parameter": {
+          "name": "Parameter",
+          "description": "Code of the parameter, such as P99 or L13. The DC pump registers have no code: use 0343 (control) or 0344 (output)."
+        },
+        "value": {
+          "name": "Value",
+          "description": "The new value in the parameter's unit; for a choice the number of the option. A value outside the parameter's range is refused."
+        }
+      }
+    }
   }
 }

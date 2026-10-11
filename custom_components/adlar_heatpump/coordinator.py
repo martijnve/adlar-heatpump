@@ -7,12 +7,14 @@ import threading
 import time
 from datetime import timedelta
 
-from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant
-from homeassistant.exceptions import HomeAssistantError
+from homeassistant.config_entries import ConfigEntry, ConfigEntryState
+from homeassistant.core import Context, HomeAssistant
+from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
+from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
-from .const import DOMAIN
+from .const import DOMAIN, EVENT_PARAMETER_WRITTEN
+from .param_info import param_step
 from .registers import (
     AC_CURRENT_REGISTER,
     ALWAYS_POLLED,
@@ -23,7 +25,9 @@ from .registers import (
     SENSOR_SENTINEL,
     R,
     calibrate_ac_current,
+    can_edit,
     is_shown,
+    param_key,
     temperature_scale,
 )
 
@@ -356,3 +360,119 @@ class AdlarCoordinator(DataUpdateCoordinator):
         await self.hass.async_add_executor_job(self._write, "write_coil", address, value)
         self._coils[address] = value
         self.async_set_updated_data(self._build_data())
+
+    # ── Installer parameters (panel and service) ───────────────────────
+
+    def _publish(self) -> None:
+        """Show the cache to the entities without pushing the next poll back."""
+        self.data = self._build_data()
+        self.async_update_listeners()
+
+    async def async_read_registers(self, addresses) -> dict[int, int]:
+        """Read holding registers now, polled or not; returns address -> raw word.
+
+        The cache follows, so sensors show what was read. An address the controller
+        rejects is missing from the result; a request without an answer is an error.
+        """
+        fresh: dict[int, int] = {}
+        try:
+            _, failed = await self.hass.async_add_executor_job(
+                self._read_blocks, plan_blocks(addresses), fresh, "registers", False
+            )
+        except ModbusUnavailable as err:
+            raise HomeAssistantError(f"Reading from the heat pump failed: {err}") from err
+        self._raw.update(fresh)
+        self._publish()
+        if failed:
+            raise HomeAssistantError(f"The heat pump did not answer {failed} read request(s)")
+        return fresh
+
+    def _write_param(self, address: int, raw: int) -> tuple[int, int | None]:
+        """Read, write and read back one register; returns the raw word before and after.
+
+        After is None when the write went out but the read-back got no answer.
+        """
+        errors = (ModbusUnavailable, ModbusRequestFailed, ModbusRejected)
+        try:
+            old = self._read("registers", address, 1)[0]
+            self._request("write_register", address, value=raw)
+        except errors as err:
+            raise HomeAssistantError(f"Writing 0x{address:04X} failed: {err}") from err
+        try:
+            return old, self._read("registers", address, 1)[0]
+        except errors:
+            return old, None
+
+    async def async_write_param(
+        self, reg: R, value: float, context: Context | None = None
+    ) -> float | int:
+        """Write an installer parameter; returns the value read back.
+
+        The one place the panel and the service write through. Unlike async_write_value
+        nothing is clamped: a value outside the range, off the step grid or not one of the
+        options is refused. The register is read before the write (the old value in the
+        logbook) and after it; a read-back that differs from what was written, or that got
+        no answer, is an error.
+        """
+        if not can_edit(reg):
+            raise ServiceValidationError(f"{reg.name} is read-only")
+        if reg.options is not None:
+            if value not in reg.options:
+                raise ServiceValidationError(
+                    f"{reg.name}: {value:g} is not one of {sorted(reg.options)}"
+                )
+        else:
+            step = param_step(reg)
+            if not reg.min <= value <= reg.max:
+                raise ServiceValidationError(
+                    f"{reg.name}: {value:g} is outside {reg.min:g} to {reg.max:g}"
+                )
+            if abs(value / step - round(value / step)) > 1e-6:
+                raise ServiceValidationError(
+                    f"{reg.name}: {value:g} is not a multiple of {step:g}"
+                )
+        raw = self.encode(reg, value)
+        old_raw, new_raw = await self.hass.async_add_executor_job(
+            self._write_param, reg.addr, raw
+        )
+        if new_raw is not None:
+            self._raw[reg.addr] = new_raw
+            self._publish()
+        old, new = (
+            r if r is None or reg.options is not None else self.decode(reg, r)
+            for r in (old_raw, new_raw)
+        )
+        device = dr.async_get(self.hass).async_get_device(
+            identifiers={(DOMAIN, self.config_entry.entry_id)}
+        )
+        # Logged with what the heat pump holds now (None: unknown), also when that isn't
+        # what was asked
+        self.hass.bus.async_fire(
+            EVENT_PARAMETER_WRITTEN,
+            {
+                "device_id": device and device.id,
+                "key": param_key(reg),
+                "name": reg.name,
+                "old": old,
+                "new": new,
+            },
+            context=context,
+        )
+        if new is None:
+            raise HomeAssistantError(
+                f"{reg.name}: wrote {value:g}, but could not read it back"
+            )
+        if new_raw != raw:
+            raise HomeAssistantError(
+                f"{reg.name}: wrote {value:g}, but the heat pump reports {new:g}"
+            )
+        return new
+
+
+def loaded_coordinator(hass: HomeAssistant, entry: ConfigEntry) -> AdlarCoordinator:
+    """The coordinator of an entry; an error while the entry isn't loaded."""
+    if entry.state is not ConfigEntryState.LOADED:
+        raise HomeAssistantError(
+            f"{entry.title} is not loaded: the heat pump cannot be reached, or it is reloading"
+        )
+    return hass.data[DOMAIN][entry.entry_id]

@@ -1,11 +1,11 @@
-"""Groups and short descriptions of the installer parameters, for the options flow.
+"""Groups and short descriptions of the installer parameters, for the parameter panel.
 
 Descriptions follow the OEM manual (HBG Trading R290 system parameters, chapters 2.7,
 2.8 and 4.3) where it covers a parameter, and the HHI v2.2 register model otherwise.
 """
 from __future__ import annotations
 
-from .registers import REGISTERS
+from .registers import PARAM, REGISTERS, R, is_param, param_key
 
 # (step id, title, first address, last address)
 PARAM_GROUPS: list[tuple[str, str, int, int]] = [
@@ -63,6 +63,80 @@ def recommended_params() -> dict[str, str]:
         f"{addr:04X}": recommended_mode(addr)
         for addr in sorted(RECOMMENDED_EDITABLE | RECOMMENDED_READ_ONLY)
     }
+
+
+# What the panel compares against until the user sets a baseline of their own: the Default
+# column of the master register table (§5) of the HHI Modbus developer reference v2.2,
+# which has a default for 64 parameters only. L14 (0x0803) is left out: the reference
+# gives 2300 (HHMM) while the register holds the hour (23 in its snapshot)
+REFERENCE_DEFAULTS: dict[int, int] = {
+    0x0100: 0, 0x0101: 0, 0x0102: 0, 0x0103: 1, 0x0104: 0, 0x0105: 0,
+    0x0106: 1, 0x0107: 0, 0x0108: 0, 0x0109: 0, 0x010A: 0, 0x0115: -15,
+    0x0116: 0, 0x0117: 20, 0x0118: 0, 0x0119: 0, 0x011A: 5, 0x011B: 5,
+    0x011C: 0, 0x011D: 2, 0x011E: 0, 0x011F: 45, 0x0120: -5, 0x0121: 9,
+    0x0122: 7, 0x0123: 10, 0x0124: 12, 0x0125: 0, 0x0127: 0, 0x012B: 0,
+    0x012C: 0, 0x012D: 1, 0x0130: 0, 0x0131: 30, 0x0160: 5, 0x0163: 5,
+    0x0174: 0, 0x0175: 5, 0x0176: 3, 0x0178: 0, 0x018B: 0, 0x018C: 0,
+    0x0196: 2, 0x0197: 0, 0x0198: 0, 0x01A1: 0, 0x01A2: 90, 0x01AE: 450,
+    0x01B5: 0, 0x01FE: 0, 0x0801: 0, 0x0802: 7, 0x0804: 10,
+    0x0805: 70, 0x0808: 45, 0x0809: 5, 0x080B: 0, 0x080C: 40, 0x080D: 5,
+    0x080E: 30, 0x080F: 5, 0x0810: 0, 0x0813: 0,
+}
+
+DC_PUMP_CONTROL_REGISTER = 0x0343
+
+# Every installer parameter by its register key ("0163")
+PARAMS: dict[str, R] = {param_key(r): r for r in REGISTERS if is_param(r)}
+
+
+def param_code(reg: R) -> str | None:
+    """The P99 / L13 a parameter's name starts with; the DC pump pair has none."""
+    return reg.name.split(" ", 1)[0] if reg.group == PARAM else None
+
+
+def param_name(reg: R) -> str:
+    """The name without the code."""
+    return reg.name.split(" ", 1)[1] if reg.group == PARAM else reg.name
+
+
+_BY_CODE = {param_code(r): r for r in PARAMS.values() if param_code(r)}
+
+
+def find_param(text: str) -> R | None:
+    """A parameter by its code (P99, L13) or its register key (0344)."""
+    text = text.strip().upper()
+    return _BY_CODE.get(text) or PARAMS.get(text)
+
+
+def param_group(reg: R) -> str | None:
+    """Id of the PARAM_GROUPS entry a parameter belongs to."""
+    return next((g[0] for g in PARAM_GROUPS if g[2] <= reg.addr <= g[3]), None)
+
+
+def group_params(group_id: str) -> list[R]:
+    """The parameters of one group; none for an unknown id."""
+    return [r for r in PARAMS.values() if param_group(r) == group_id]
+
+
+def param_step(reg: R) -> float | None:
+    """Step of a numeric parameter's value; None for a choice."""
+    # ponytail: no installer parameter is refrigerant-scaled (R.temp); one that is needs the
+    # coordinator's temperature scale here
+    return None if reg.options is not None else reg.scale
+
+
+# Groups whose parameters get an extra warning before a write in the panel
+WARNING_BY_GROUP = {"protection": "protection", "working": "factory", "service": "dc_pump"}
+# Guards outside the protection group: P117, P118, P145, P147, P148 anti-freeze, P134 low
+# water flow, P149 outlet water limit
+PROTECTION_EXTRA = {0x0175, 0x0176, 0x0191, 0x0193, 0x0194, 0x0186, 0x0195}
+
+def warning_class(reg: R) -> str | None:
+    """Why a parameter is risky to change: "factory", "protection" or "dc_pump"; else None."""
+    if reg.addr in PROTECTION_EXTRA:
+        return "protection"
+    return WARNING_BY_GROUP.get(param_group(reg))
+
 
 DESCRIPTIONS: dict[int, str] = {
     # --- P00–P16 ---

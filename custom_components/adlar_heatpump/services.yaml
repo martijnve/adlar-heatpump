@@ -1,0 +1,19 @@
+set_parameter:
+  fields:
+    device_id:
+      required: true
+      selector:
+        device:
+          integration: adlar_heatpump
+    parameter:
+      required: true
+      example: P99
+      selector:
+        text:
+    value:
+      required: true
+      example: 5
+      selector:
+        number:
+          mode: box
+          step: any

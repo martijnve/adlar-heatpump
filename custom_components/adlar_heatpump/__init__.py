@@ -6,8 +6,11 @@ import logging
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_HOST, CONF_PORT, CONF_SCAN_INTERVAL, Platform
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers.typing import ConfigType
 
+from . import services, websocket
 from .const import (
     CONF_EXPERT_MODE,
     CONF_PARAMS,
@@ -20,6 +23,7 @@ from .const import (
     DOMAIN,
 )
 from .coordinator import AdlarCoordinator
+from .panel import async_remove_panel, async_setup_panel
 from .registers import (
     HIDDEN,
     READ_ONLY,
@@ -33,8 +37,20 @@ _LOGGER = logging.getLogger(__name__)
 
 PLATFORMS = [Platform.SENSOR, Platform.BINARY_SENSOR, Platform.NUMBER, Platform.SWITCH, Platform.SELECT, Platform.CLIMATE]
 
+CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
+
+
+async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
+    """Register the websocket API of the parameter panel and the set_parameter service."""
+    websocket.async_register(hass)
+    services.async_register(hass)
+    return True
+
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    # Before the first refresh: the panel also shows a heat pump that can't be reached, and
+    # it stays through reloads (removed with the last entry)
+    await async_setup_panel(hass)
     # Options override the values given at setup (the options flow edits scan interval)
     config = {**entry.data, **entry.options}
     coordinator = AdlarCoordinator(
@@ -62,6 +78,14 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         coordinator: AdlarCoordinator = hass.data[DOMAIN].pop(entry.entry_id)
         await hass.async_add_executor_job(coordinator.close)
     return unloaded
+
+
+async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """The baseline goes with the entry, the parameter panel with the last entry."""
+    await websocket.baseline_store(hass, entry.entry_id).async_remove()
+    others = [e for e in hass.config_entries.async_entries(DOMAIN) if e.entry_id != entry.entry_id]
+    if not others:
+        async_remove_panel(hass)
 
 
 async def _async_reload_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:

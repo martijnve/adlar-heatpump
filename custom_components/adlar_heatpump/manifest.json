@@ -5,6 +5,12 @@
   "documentation": "https://github.com/martijnve/adlar-heatpump",
   "issue_tracker": "https://github.com/martijnve/adlar-heatpump/issues",
   "dependencies": [],
+  "after_dependencies": [
+    "frontend",
+    "http",
+    "panel_custom",
+    "websocket_api"
+  ],
   "codeowners": [
     "@conradhagemans",
     "@martijnve"
