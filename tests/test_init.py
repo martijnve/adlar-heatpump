@@ -322,56 +322,16 @@ async def test_delta_parameter_is_not_a_temperature(hass, fake_client):
     assert _entity(hass, "number", "num_0301").original_device_class == "temperature"
 
 
-async def test_options_flow_pages(hass, fake_client):
-    entry = await _setup(hass)
+async def test_options_flow_keeps_params(hass, fake_client):
+    entry = await _setup(hass, _params(reg_010b="editable"))
     flow = hass.config_entries.options
     result = await flow.async_init(entry.entry_id)
-    assert result["type"] == "menu"
-    assert {"polling", "group_protection", "group_service", "save"} <= set(result["menu_options"])
-
-    result = await flow.async_configure(result["flow_id"], {"next_step_id": "polling"})
+    assert result["type"] == "form" and result["step_id"] == "init"
     result = await flow.async_configure(result["flow_id"], {"scan_interval": 300, "slow_interval": 900})
-    assert result["type"] == "menu"
-
-    result = await flow.async_configure(result["flow_id"], {"next_step_id": "group_protection"})
-    assert result["type"] == "form"
-    fields = {str(k): k for k in result["data_schema"].schema}
-    assert "reg_010b" in fields and "set_all" in fields
-    result = await flow.async_configure(
-        result["flow_id"], {"set_all": "keep", "reg_010b": "editable", "reg_010c": "read_only"}
-    )
-    result = await flow.async_configure(result["flow_id"], {"next_step_id": "group_eev"})
-    # set all: editable where allowed; the protected slave address falls back to read-only
-    result = await flow.async_configure(result["flow_id"], {"set_all": "editable"})
-    result = await flow.async_configure(result["flow_id"], {"next_step_id": "save"})
     assert result["type"] == "create_entry"
     await hass.async_block_till_done()
-
-    params = entry.options[CONF_PARAMS]
     assert entry.options["scan_interval"] == 300 and entry.options["slow_interval"] == 900
-    assert params["010B"] == "editable" and params["010C"] == "read_only"
-    assert "010D" not in params                       # left hidden: not stored
-    assert params["0126"] == "editable" and params["012D"] == "read_only"
-    coordinator = hass.data[DOMAIN][ENTRY_ID]
-    assert coordinator.update_interval.total_seconds() == 300
-    assert _entity(hass, "number", "num_010B")
-
-
-def test_translations_cover_every_parameter():
-    import json
-    from pathlib import Path
-
-    from custom_components.adlar_heatpump.config_flow import field_key, group_registers
-    from custom_components.adlar_heatpump.param_info import PARAM_GROUPS
-
-    root = Path(__file__).parent.parent / "custom_components" / "adlar_heatpump"
-    en = json.loads((root / "translations" / "en.json").read_text())
-    assert en == json.loads((root / "strings.json").read_text())
-    for key, _, first, last in PARAM_GROUPS:
-        step = en["options"]["step"][f"group_{key}"]
-        for reg in group_registers(first, last):
-            assert step["data"][field_key(reg)] == reg.name
-            assert step["data_description"][field_key(reg)]
+    assert entry.options[CONF_PARAMS] == {"010B": "editable"}
 
 
 async def test_new_setup_gets_recommended_params(hass, fake_client):
@@ -390,19 +350,6 @@ async def test_new_setup_gets_recommended_params(hass, fake_client):
     registry = er.async_get(hass)
     assert registry.async_get_entity_id("number", DOMAIN, f"{entry.entry_id}_num_011A")
     assert registry.async_get_entity_id("sensor", DOMAIN, f"{entry.entry_id}_011E")
-
-
-async def test_set_all_recommended(hass, fake_client):
-    entry = await _setup(hass, _params(reg_010b="editable"))
-    flow = hass.config_entries.options
-    result = await flow.async_init(entry.entry_id)
-    result = await flow.async_configure(result["flow_id"], {"next_step_id": "group_protection"})
-    result = await flow.async_configure(result["flow_id"], {"set_all": "recommended"})
-    result = await flow.async_configure(result["flow_id"], {"next_step_id": "save"})
-    await hass.async_block_till_done()
-    params = entry.options[CONF_PARAMS]
-    assert "010B" not in params                  # P11 back to hidden
-    assert params["0103"] == "editable" and params["0105"] == "editable"   # P03, P05
 
 
 async def test_p151_is_an_outdoor_temperature(hass, fake_client):

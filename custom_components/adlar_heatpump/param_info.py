@@ -2,7 +2,6 @@
 
 Descriptions follow the OEM manual (HBG Trading R290 system parameters, chapters 2.7,
 2.8 and 4.3) where it covers a parameter, and the HHI v2.2 register model otherwise.
-tools/gen_translations.py turns them into the options-flow texts in translations/en.json.
 """
 from __future__ import annotations
 

@@ -7,11 +7,6 @@ import voluptuous as vol
 from homeassistant import config_entries
 from homeassistant.const import CONF_HOST, CONF_PORT, CONF_SCAN_INTERVAL
 from homeassistant.core import callback
-from homeassistant.helpers.selector import (
-    SelectSelector,
-    SelectSelectorConfig,
-    SelectSelectorMode,
-)
 
 from .const import (
     CONF_PARAMS,
@@ -23,19 +18,7 @@ from .const import (
     DEFAULT_SLOW_INTERVAL,
     DOMAIN,
 )
-from .param_info import PARAM_GROUPS, recommended_mode, recommended_params
-from .registers import (
-    EDITABLE,
-    HIDDEN,
-    PARAM_MODES,
-    READ_ONLY,
-    REGISTERS,
-    R,
-    can_edit,
-    is_param,
-    param_key,
-    param_mode,
-)
+from .param_info import recommended_params
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -99,43 +82,17 @@ class AdlarConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         return AdlarOptionsFlow(config_entry)
 
 
-KEEP = "keep"
-RECOMMENDED = "recommended"
-SET_ALL = "set_all"
-
-
-def field_key(reg: R) -> str:
-    """Form field (and translation key) of a parameter."""
-    return f"reg_{reg.addr:04x}"
-
-
-def group_registers(first: int, last: int) -> list[R]:
-    return [r for r in REGISTERS if is_param(r) and first <= r.addr <= last]
-
-
 class AdlarOptionsFlow(config_entries.OptionsFlow):
-    """Menu: polling intervals, one page per group of installer parameters, save.
-
-    Each page picks hidden / read-only / editable per parameter; the menu comes back
-    after a page and "Save" stores everything and reloads the entry.
-    """
+    """Polling intervals; the per-parameter choices live in the parameter panel."""
 
     def __init__(self, config_entry):
         self._config_entry = config_entry
-        self._options = dict(config_entry.options)
-        self._params: dict[str, str] = dict(self._options.get(CONF_PARAMS, {}))
 
     async def async_step_init(self, user_input=None):
-        return self.async_show_menu(
-            step_id="init",
-            menu_options=["polling", *(f"group_{key}" for key, *_ in PARAM_GROUPS), "save"],
-        )
-
-    async def async_step_polling(self, user_input=None):
+        options = dict(self._config_entry.options)
         if user_input is not None:
-            self._options.update(user_input)
-            return await self.async_step_init()
-        current = {**self._config_entry.data, **self._options}
+            return self.async_create_entry(title="", data={**options, **user_input})
+        current = {**self._config_entry.data, **options}
         schema = vol.Schema(
             {
                 vol.Required(
@@ -148,52 +105,4 @@ class AdlarOptionsFlow(config_entries.OptionsFlow):
                 ): vol.All(int, vol.Range(min=60)),
             }
         )
-        return self.async_show_form(step_id="polling", data_schema=schema)
-
-    async def async_step_save(self, user_input=None):
-        # Only shown parameters are stored; a missing one is hidden
-        self._options[CONF_PARAMS] = {k: v for k, v in self._params.items() if v != HIDDEN}
-        return self.async_create_entry(title="", data=self._options)
-
-    async def _async_group_step(self, key: str, first: int, last: int, user_input):
-        registers = group_registers(first, last)
-        if user_input is not None:
-            set_all = user_input.get(SET_ALL, KEEP)
-            for reg in registers:
-                if set_all == KEEP:
-                    mode = user_input.get(field_key(reg), HIDDEN)
-                elif set_all == RECOMMENDED:
-                    mode = recommended_mode(reg.addr)
-                else:
-                    mode = set_all
-                if mode == EDITABLE and not can_edit(reg):
-                    mode = READ_ONLY
-                self._params[param_key(reg)] = mode
-            return await self.async_step_init()
-
-        fields: dict = {
-            vol.Optional(SET_ALL, default=KEEP): SelectSelector(SelectSelectorConfig(
-                options=[KEEP, RECOMMENDED, *PARAM_MODES], translation_key=SET_ALL,
-                mode=SelectSelectorMode.DROPDOWN,
-            )),
-        }
-        for reg in registers:
-            modes = PARAM_MODES if can_edit(reg) else (HIDDEN, READ_ONLY)
-            fields[vol.Required(field_key(reg), default=param_mode(reg, self._params))] = (
-                SelectSelector(SelectSelectorConfig(
-                    options=list(modes), translation_key="param_mode",
-                    mode=SelectSelectorMode.DROPDOWN,
-                ))
-            )
-        return self.async_show_form(step_id=f"group_{key}", data_schema=vol.Schema(fields))
-
-
-def _make_group_step(key: str, first: int, last: int):
-    async def step(self, user_input=None):
-        return await self._async_group_step(key, first, last, user_input)
-    return step
-
-
-# One async_step_group_<key> per parameter group
-for _key, _title, _first, _last in PARAM_GROUPS:
-    setattr(AdlarOptionsFlow, f"async_step_group_{_key}", _make_group_step(_key, _first, _last))
+        return self.async_show_form(step_id="init", data_schema=schema)
