@@ -1,6 +1,8 @@
 """The sidebar panel registers once, admin-only, and goes away again."""
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 from homeassistant.components.frontend import DATA_PANELS
 from homeassistant.setup import async_setup_component
@@ -40,6 +42,12 @@ async def test_setup_registers_admin_panel_once(hass, web):
 
     await async_setup_panel(hass)  # would raise "Overwriting panel" if it registered twice
     assert hass.data[DATA_PANELS][PANEL_URL_PATH] is panel
+
+
+async def test_concurrent_setup_registers_once(hass, web):
+    # Two config entries set up at the same time; a second static path raises RuntimeError
+    await asyncio.gather(async_setup_panel(hass), async_setup_panel(hass))
+    assert PANEL_URL_PATH in hass.data[DATA_PANELS]
 
 
 async def test_remove_panel_is_idempotent(hass, web):

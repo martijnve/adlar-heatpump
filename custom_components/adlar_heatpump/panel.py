@@ -28,23 +28,33 @@ async def async_setup_panel(hass: HomeAssistant) -> None:
         or "frontend" not in hass.config.components
     ):
         return
-    integration = await async_get_integration(hass, DOMAIN)
-    if not hass.data.get(DATA_SERVED):
-        await hass.http.async_register_static_paths(
-            [StaticPathConfig(BUNDLE_URL, str(BUNDLE_FILE), cache_headers=False)]
-        )
-        hass.data[DATA_SERVED] = True
-    await panel_custom.async_register_panel(
-        hass,
-        frontend_url_path=PANEL_URL_PATH,
-        webcomponent_name=PANEL_ELEMENT,
-        sidebar_title="Heat pump parameters",
-        sidebar_icon="mdi:heat-pump",
-        # The version query makes browsers load a new bundle after an update.
-        module_url=f"{BUNDLE_URL}?v={integration.version}",
-        require_admin=True,
-    )
+    # Claim the flags before the first await: entries set up concurrently must not register twice.
     hass.data[DATA_REGISTERED] = True
+    try:
+        integration = await async_get_integration(hass, DOMAIN)
+        if not hass.data.get(DATA_SERVED):
+            hass.data[DATA_SERVED] = True
+            try:
+                await hass.http.async_register_static_paths(
+                    [StaticPathConfig(BUNDLE_URL, str(BUNDLE_FILE), cache_headers=False)]
+                )
+            except BaseException:
+                del hass.data[DATA_SERVED]
+                raise
+        await panel_custom.async_register_panel(
+            hass,
+            frontend_url_path=PANEL_URL_PATH,
+            webcomponent_name=PANEL_ELEMENT,
+            sidebar_title="Heat pump parameters",
+            sidebar_icon="mdi:heat-pump",
+            # The version query makes browsers load a new bundle after an update.
+            module_url=f"{BUNDLE_URL}?v={integration.version}",
+            require_admin=True,
+        )
+    except BaseException:
+        # Let a later call try again
+        del hass.data[DATA_REGISTERED]
+        raise
 
 
 def async_remove_panel(hass: HomeAssistant) -> None:
