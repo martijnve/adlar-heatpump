@@ -2,11 +2,13 @@
   "$schema": "https://raw.githubusercontent.com/jetify-com/devbox/0.17.2/.schema/devbox.schema.json",
   "packages": [
     "python312@latest",
-    "ruff@latest"
+    "ruff@latest",
+    "nodejs@22"
   ],
   "shell": {
     "init_hook": [
-      "echo 'Welcome to devbox!' > /dev/null"
+      "echo 'Welcome to devbox!' > /dev/null",
+      "(cd frontend && [ -d node_modules ] || npm ci --silent)"
     ],
     "scripts": {
       "setup": [
@@ -15,10 +17,15 @@
       ],
       "test": [
         "test -x .venv/bin/pytest || devbox run setup",
-        ".venv/bin/pytest tests"
+        ".venv/bin/pytest tests",
+        "(cd frontend && npx vitest run)"
       ],
       "lint": [
+        "(cd frontend && npx tsc --noEmit)",
         "ruff check custom_components tests"
+      ],
+      "build": [
+        "(cd frontend && npm run build)"
       ]
     }
   }
