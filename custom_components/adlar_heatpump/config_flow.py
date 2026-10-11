@@ -18,7 +18,6 @@ from .const import (
     DEFAULT_SLOW_INTERVAL,
     DOMAIN,
 )
-from .param_info import recommended_params
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -28,7 +27,8 @@ class AdlarConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     VERSION = 1
     # 1.2: per-parameter choices (CONF_PARAMS) replace the expert mode switch
-    MINOR_VERSION = 2
+    # 1.3: parameters are hidden or read-only sensors, never writable entities
+    MINOR_VERSION = 3
 
     async def async_step_user(self, user_input=None):
         errors = {}
@@ -55,8 +55,7 @@ class AdlarConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 return self.async_create_entry(
                     title=f"Adlar Heatpump ({user_input[CONF_HOST]})",
                     data=user_input,
-                    # Start with the parameters Adlår's manual has users look at or change
-                    options={CONF_PARAMS: recommended_params()},
+                    options={CONF_PARAMS: {}},
                 )
 
         schema = vol.Schema(

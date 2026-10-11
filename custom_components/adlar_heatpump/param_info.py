@@ -27,9 +27,9 @@ PARAM_GROUPS: list[tuple[str, str, int, int]] = [
 _FACTORY = "Factory setting; change only on the manufacturer's advice."
 
 # Default choice for a new setup, from Adlår's advanced user manual (Aurora II
-# bedieningshandleiding geavanceerd NL1.3): editable = what its troubleshooting (§10, §11.1)
-# tells users to change; read-only = the rest of its parameter list (§8.2) plus useful
-# context; everything else hidden.
+# bedieningshandleiding geavanceerd NL1.3): the first set is what its troubleshooting
+# (§10, §11.1) tells users to change, the second the rest of its parameter list (§8.2) plus
+# useful context; both are shown as sensors, everything else hidden.
 RECOMMENDED_EDITABLE = {
     0x0116, 0x0197,                  # P22, P151 backup heating thresholds
     0x0105, 0x011A, 0x0174,          # P05 link switch, P26 hysteresis, P116 inlet/outlet
@@ -52,9 +52,7 @@ RECOMMENDED_READ_ONLY = {
 
 
 def recommended_mode(addr: int) -> str:
-    if addr in RECOMMENDED_EDITABLE:
-        return "editable"
-    if addr in RECOMMENDED_READ_ONLY:
+    if addr in RECOMMENDED_EDITABLE | RECOMMENDED_READ_ONLY:
         return "read_only"
     return "hidden"
 

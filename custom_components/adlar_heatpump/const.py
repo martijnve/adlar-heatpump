@@ -13,7 +13,7 @@ CONF_SLAVE = "slave"
 # Seconds between reads of the slow tier (P/L parameters, limits, version info)
 CONF_SLOW_INTERVAL = "slow_interval"
 DEFAULT_SLOW_INTERVAL = 600
-# Per installer parameter ("0100": "read_only" / "editable"; missing = hidden)
+# Per installer parameter shown as a sensor ("0100": "read_only"; missing = hidden)
 CONF_PARAMS = "params"
 # Replaced by CONF_PARAMS in config entry version 1.2; read only to migrate
 CONF_EXPERT_MODE = "expert_mode"

@@ -49,11 +49,11 @@ async def async_setup_entry(
     coordinator: AdlarCoordinator = hass.data[DOMAIN][entry.entry_id]
     params = entry.options.get(CONF_PARAMS, {})
 
-    # Every shown register that isn't writable is a sensor
+    # Every shown register that isn't a user control is a sensor
     entities: list[SensorEntity] = [
         AdlarSensor(coordinator, reg)
         for reg in REGISTERS
-        if is_shown(reg, params) and not is_writable(reg, params)
+        if is_shown(reg, params) and not is_writable(reg)
     ]
     entities.append(AdlarThermalPowerSensor(coordinator))
     entities.append(AdlarCOPSensor(coordinator))

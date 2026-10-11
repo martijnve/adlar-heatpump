@@ -21,11 +21,9 @@ from .const import (
 )
 from .coordinator import AdlarCoordinator
 from .registers import (
-    EDITABLE,
     HIDDEN,
     READ_ONLY,
     REGISTERS,
-    can_edit,
     is_param,
     param_key,
     param_mode,
@@ -73,9 +71,10 @@ async def _async_reload_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
 async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """1.1 → 1.2: the expert mode switch becomes a choice per installer parameter.
 
-    Expert mode on: every parameter that can be edited becomes editable, the rest
-    read-only. Expert mode off: parameters whose sensor the user had enabled stay
-    read-only, the others hidden.
+    Expert mode on: every parameter becomes read-only. Expert mode off: parameters whose
+    sensor the user had enabled stay read-only, the others hidden.
+
+    1.2 → 1.3: the editable choice is gone; such a parameter becomes read-only.
     """
     if entry.version > 1:
         return False
@@ -88,7 +87,7 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             if not is_param(reg):
                 continue
             if expert:
-                params[param_key(reg)] = EDITABLE if can_edit(reg) else READ_ONLY
+                params[param_key(reg)] = READ_ONLY
                 continue
             sensor_id = registry.async_get_entity_id(
                 "sensor", DOMAIN, f"{entry.entry_id}_{reg.addr:04X}"
@@ -98,14 +97,20 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         options[CONF_PARAMS] = params
         hass.config_entries.async_update_entry(entry, options=options, minor_version=2)
         _LOGGER.info("Migrated expert mode (%s) to %d shown parameters", expert, len(params))
+    if entry.minor_version < 3:
+        # 1.2 → 1.3: parameters are no longer writable entities; "editable" is gone
+        params = {k: READ_ONLY for k in entry.options.get(CONF_PARAMS, {})}
+        hass.config_entries.async_update_entry(
+            entry, options={**entry.options, CONF_PARAMS: params}, minor_version=3
+        )
     return True
 
 
 def _sync_param_entities(hass: HomeAssistant, entry: ConfigEntry) -> None:
     """Make the registry match the user's choice per installer parameter.
 
-    Hidden: the entries on every platform go. Read-only (sensor) or editable
-    (number/select): the entry of the other platform moves over with the user's settings
+    Hidden: the entries on every platform go. Shown (sensor): a number/select
+    entry of an earlier version moves over with the user's settings
     (hidden, name, icon, area, entity_id object id, and disabled when the user disabled
     it). The user chose to show the parameter, so it isn't left disabled by default.
     """
@@ -124,7 +129,7 @@ def _sync_param_entities(hass: HomeAssistant, entry: ConfigEntry) -> None:
                 if entity_id := registry.async_get_entity_id(domain, DOMAIN, unique_id):
                     registry.async_remove(entity_id)
             continue
-        new, old = (writable, sensor) if mode == EDITABLE else (sensor, writable)
+        new, old = sensor, writable
         new_id = registry.async_get_entity_id(new[0], DOMAIN, new[1])
         old_id = registry.async_get_entity_id(old[0], DOMAIN, old[1])
         if old_id is not None:

@@ -46,7 +46,7 @@ class R:
     options: dict[int, str] | None = None
     signed: bool = True
     enabled: bool = True          # entity enabled by default
-    protected: bool = False       # never editable, only hidden or read-only
+    protected: bool = False       # never written, only hidden or read-only
     installer: bool = False       # CONTROL register handled like an installer parameter
     delta: bool = False           # °C difference/offset, not an absolute temperature
 
@@ -693,11 +693,10 @@ def calibrate_ac_current(value: float) -> float:
     return value - (curve[-1][0] - curve[-1][1])
 
 
-# How the user shows an installer parameter (options flow); hidden ones aren't polled
+# How the user shows an installer parameter (parameter panel); hidden ones aren't polled
 HIDDEN = "hidden"
 READ_ONLY = "read_only"
-EDITABLE = "editable"
-PARAM_MODES = (HIDDEN, READ_ONLY, EDITABLE)
+PARAM_MODES = (HIDDEN, READ_ONLY)
 
 # Always read, whatever the user chose: P119 sets the temperature scale, P114 the
 # number of compressors (System 2 fault sensors)
@@ -705,12 +704,12 @@ ALWAYS_POLLED = {REFRIGERANT_REGISTER, COMPRESSORS_REGISTER}
 
 
 def is_param(reg: R) -> bool:
-    """Installer parameter: shown hidden, read-only or editable as the user chooses."""
+    """Installer parameter: hidden or a read-only sensor, as the user chooses."""
     return reg.group == PARAM or reg.installer
 
 
 def can_edit(reg: R) -> bool:
-    """Whether a parameter may be offered as editable: not protected and with known bounds."""
+    """Whether the panel and the service may write a parameter: not protected, known bounds."""
     return not reg.protected and (
         reg.options is not None or (reg.min is not None and reg.max is not None)
     )
@@ -721,19 +720,14 @@ def param_key(reg: R) -> str:
 
 
 def param_mode(reg: R, params: dict[str, str]) -> str:
-    """The user's choice for a parameter (hidden when not chosen); editable only if allowed."""
-    mode = params.get(param_key(reg), HIDDEN)
-    if mode == EDITABLE and not can_edit(reg):
-        return READ_ONLY
-    return mode
+    """The user's choice for a parameter: read-only when its key is stored, else hidden."""
+    return READ_ONLY if param_key(reg) in params else HIDDEN
 
 
 def is_shown(reg: R, params: dict[str, str]) -> bool:
     return not is_param(reg) or param_mode(reg, params) != HIDDEN
 
 
-def is_writable(reg: R, params: dict[str, str]) -> bool:
-    """User controls always; installer parameters when the user made them editable."""
-    if is_param(reg):
-        return param_mode(reg, params) == EDITABLE
-    return reg.group == CONTROL and not reg.protected
+def is_writable(reg: R) -> bool:
+    """User controls only; installer parameters are never writable entities."""
+    return reg.group == CONTROL and not reg.protected and not is_param(reg)

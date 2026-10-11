@@ -6,7 +6,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from .const import CONF_PARAMS, DOMAIN
+from .const import DOMAIN
 from .coordinator import AdlarCoordinator
 from .entity import AdlarRegisterEntity
 from .registers import REGISTERS, SWITCH_REGISTER, R, is_writable
@@ -16,11 +16,10 @@ async def async_setup_entry(
     hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback
 ) -> None:
     coordinator: AdlarCoordinator = hass.data[DOMAIN][entry.entry_id]
-    params = entry.options.get(CONF_PARAMS, {})
     async_add_entities(
         AdlarNumber(coordinator, reg)
         for reg in REGISTERS
-        if is_writable(reg, params) and reg.options is None and reg.addr != SWITCH_REGISTER
+        if is_writable(reg) and reg.options is None and reg.addr != SWITCH_REGISTER
     )
 
 
