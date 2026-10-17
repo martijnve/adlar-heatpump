@@ -172,7 +172,7 @@ class AdlarCoordinator(DataUpdateCoordinator):
         from pymodbus.client import ModbusTcpClient
         if self._client is None or not self._client.connected:
             self._drop_client()
-            self._client = ModbusTcpClient(host=self.host, port=self.port, timeout=10)
+            self._client = ModbusTcpClient(host=self.host, port=self.port, timeout=3)
             if not self._client.connect():
                 self._drop_client()
                 raise ModbusUnavailable(
