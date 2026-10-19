@@ -5,6 +5,7 @@ import inspect
 import logging
 import threading
 import time
+from collections import Counter
 from datetime import timedelta
 
 from homeassistant.config_entries import ConfigEntry, ConfigEntryState
@@ -125,6 +126,8 @@ class AdlarCoordinator(DataUpdateCoordinator):
         self._coils: dict[int, bool] = {}
         self._unsupported: set[int] = set()
         self._last_slow: float | None = None
+        # Successful reads per register address, so an entity can tell a fresh read from a reused value
+        self.reads: Counter[int] = Counter()
 
         # Hidden installer parameters aren't needed, but a block costs one request however
         # many registers it holds: blocks are planned over every known address and only
@@ -214,8 +217,15 @@ class AdlarCoordinator(DataUpdateCoordinator):
     def _read(self, kind: str, start: int, count: int) -> list:
         name = "read_coils" if kind == "coils" else "read_holding_registers"
         result = self._request(name, start, count=count)
-        values = result.bits if kind == "coils" else result.registers
-        return list(values[:count])
+        if kind == "coils":
+            return list(result.bits[:count])
+        if len(result.registers) != count:
+            # Not the answer to this request (e.g. a reply meant for another master on the gateway)
+            with self._lock:
+                self._drop_client()
+            raise ModbusRequestFailed(f"{name} 0x{start:04X}: {len(result.registers)} registers instead of {count}")
+        self.reads.update(range(start, start + count))
+        return list(result.registers)
 
     def _read_blocks(self, blocks: list[tuple[int, int]], store: dict, kind: str, forget: bool) -> tuple[int, int]:
         """Read blocks into `store`; returns (requests answered, requests failed).

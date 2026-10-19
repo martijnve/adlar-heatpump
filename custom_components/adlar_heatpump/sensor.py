@@ -2,12 +2,13 @@
 from __future__ import annotations
 
 from homeassistant.components.sensor import (
+    RestoreSensor,
     SensorDeviceClass,
     SensorEntity,
     SensorStateClass,
 )
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import CONF_PARAMS, DOMAIN
@@ -42,6 +43,9 @@ HA_UNIT = {"RPM": "rpm", "days": "d"}
 # Encoded as major*100 + minor*10 + patch (433 = V4.3.3)
 VERSION_REGISTERS = (0x0360, 0x0363)
 
+# Reads in a row a kWh counter must show a lower value before the drop is published
+COUNTER_DROP_READS = 3
+
 
 async def async_setup_entry(
     hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback
@@ -51,7 +55,7 @@ async def async_setup_entry(
 
     # Every shown register that isn't a user control is a sensor
     entities: list[SensorEntity] = [
-        AdlarSensor(coordinator, reg)
+        (AdlarEnergyCounter if reg.unit == "kWh" else AdlarSensor)(coordinator, reg)
         for reg in REGISTERS
         if is_shown(reg, params) and not is_writable(reg)
     ]
@@ -99,6 +103,47 @@ class AdlarSensor(AdlarRegisterEntity, SensorEntity):
         if self._reg.addr in VERSION_REGISTERS:
             return f"{value // 100}.{value // 10 % 10}.{value % 10}"
         return value
+
+
+class AdlarEnergyCounter(AdlarSensor, RestoreSensor):
+    """kWh counter that ignores a one-off lower reading.
+
+    Home Assistant takes any drop of a total_increasing sensor as a meter reset and adds the
+    next reading in full, so 2985 -> 0 -> 2985 would count 2985 kWh twice. A real drop
+    (controller reset, 16-bit wrap) is published once COUNTER_DROP_READS fresh reads agree.
+    """
+
+    _held = None    # last accepted value; survives failed reads and, restored, a reload
+    _low_reads = 0
+    _seen_reads = 0  # coordinator.reads for this register when last looked at
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        if (last := await self.async_get_last_sensor_data()) is not None:
+            self._held = last.native_value
+        self._track()
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        self._track()
+        super()._handle_coordinator_update()
+
+    def _track(self) -> None:
+        reads = self.coordinator.reads[self._reg.addr]
+        value = self._raw_value
+        if value is None or reads == self._seen_reads:
+            return
+        self._seen_reads = reads
+        if self._held is None or value >= self._held:
+            self._held, self._low_reads = value, 0
+            return
+        self._low_reads += 1
+        if self._low_reads >= COUNTER_DROP_READS:
+            self._held, self._low_reads = value, 0
+
+    @property
+    def native_value(self):
+        return None if self._raw_value is None else self._held
 
 
 class AdlarThermalPowerSensor(AdlarEntity, SensorEntity):
