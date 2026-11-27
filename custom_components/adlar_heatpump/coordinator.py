@@ -68,7 +68,7 @@ PANEL_TIMEOUT = 35
 # The firmware's error codes, at the end of the message of the failed action
 _PANEL_ERROR = re.compile(
     r"\b(busy|count|exception:\d+|no_reply|bad_length|not_sent|timeout|locked|pin|address"
-    r"|mismatch:\d+|try_again)\b"
+    r"|mismatch:\d+|try_again|value)\b"
 )
 
 
