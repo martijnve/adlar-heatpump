@@ -67,6 +67,15 @@ Copy the `custom_components/adlar_heatpump/` folder into your HA `config/custom_
 
 The polling intervals can be changed later under **Configure**; the installer parameters have their own page, **Heat pump parameters** in the sidebar.
 
+### Through an ESPHome thermostat panel (transport "panel")
+
+When an ESPHome device is already the Modbus master of the heat pump, a second master on the same bus mixes up replies. Choose transport **panel** instead. The integration then reads and writes installer parameters through that device's ESPHome actions: `<prefix>_read_parameters`, `<prefix>_write_parameter` and `<prefix>_check_pin`, all with responses. The device does the Modbus traffic on its own queue.
+
+- Enter the action prefix (the ESPHome node name with `_`, e.g. `living_room_thermostat`) and the device's write PIN.
+- The integration doesn't poll and creates no entities in this mode. Only the **Heat pump parameters** page reads, and only that page writes: `set_parameter` and the sensor/automation choices are refused.
+- The device itself refuses writes outside the installer parameter ranges, to protected registers, with a wrong PIN, or when the register no longer holds the value the page showed.
+- Requires Home Assistant 2025.12 or later (ESPHome action responses).
+
 ---
 
 ## Entities created
