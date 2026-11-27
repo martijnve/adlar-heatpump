@@ -7,6 +7,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_HOST, CONF_PORT, CONF_SCAN_INTERVAL, Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import config_validation as cv
+from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.typing import ConfigType
 
@@ -14,15 +15,18 @@ from . import services, websocket
 from .const import (
     CONF_EXPERT_MODE,
     CONF_PARAMS,
+    CONF_PIN,
+    CONF_PREFIX,
     CONF_SLAVE,
     CONF_SLOW_INTERVAL,
     DEFAULT_PORT,
     DEFAULT_SCAN_INTERVAL,
     DEFAULT_SLAVE,
     DEFAULT_SLOW_INTERVAL,
+    DEVICE_NAME,
     DOMAIN,
 )
-from .coordinator import AdlarCoordinator
+from .coordinator import AdlarCoordinator, PanelTransport, panel_mode
 from .panel import async_remove_panel, async_setup_panel
 from .registers import (
     HIDDEN,
@@ -51,6 +55,23 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Before the first refresh: the panel also shows a heat pump that can't be reached, and
     # it stays through reloads (removed with the last entry)
     await async_setup_panel(hass)
+    if panel_mode(entry):
+        # No polls and no entities: only the parameter panel reads and writes
+        coordinator = AdlarCoordinator(
+            hass, entry, host=None, port=0, slave=0, scan_interval=None, slow_interval=0,
+            panel=PanelTransport(hass, entry.data[CONF_PREFIX], entry.data[CONF_PIN]),
+        )
+        coordinator.data = coordinator._build_data()
+        hass.data.setdefault(DOMAIN, {})[entry.entry_id] = coordinator
+        # The logbook entry of a write goes on the device
+        dr.async_get(hass).async_get_or_create(
+            config_entry_id=entry.entry_id,
+            identifiers={(DOMAIN, entry.entry_id)},
+            name=DEVICE_NAME,
+            manufacturer="Adlar",
+            model="Aurora II",
+        )
+        return True
     # Options override the values given at setup (the options flow edits scan interval)
     config = {**entry.data, **entry.options}
     coordinator = AdlarCoordinator(
@@ -73,6 +94,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    if panel_mode(entry):
+        # No platforms were loaded (unloading them would raise), and no connection is held
+        hass.data[DOMAIN].pop(entry.entry_id)
+        return True
     unloaded = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     if unloaded:
         coordinator: AdlarCoordinator = hass.data[DOMAIN].pop(entry.entry_id)
@@ -99,9 +124,13 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     sensor the user had enabled stay read-only, the others hidden.
 
     1.2 → 1.3: the editable choice is gone; such a parameter becomes read-only.
+
+    TCP entries stay version 1; version 2 is a panel entry, which needs no migration.
     """
-    if entry.version > 1:
+    if entry.version > 2:
         return False
+    if entry.version == 2:
+        return True
     if entry.minor_version < 2:
         options = dict(entry.options)
         expert = options.pop(CONF_EXPERT_MODE, False)

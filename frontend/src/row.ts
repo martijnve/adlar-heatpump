@@ -8,6 +8,8 @@ import type { Parameter } from "./types";
 export interface RowContext {
   /** Nothing is being read, written or edited: an edit may start. */
   idle: boolean;
+  /** Show the sensor and automation ticks (not in panel mode). */
+  choices: boolean;
   staged: Choices;
   edit: { key: string; input: string } | null;
   /** Key of the parameter being written. */
@@ -100,9 +102,11 @@ export function parameterRow(p: Parameter, c: RowContext) {
         ? html`<div class="result ${c.result.ok ? "ok" : "error"}" role="status">${c.result.text}</div>`
         : nothing}
     </div>
-    <div class="choices">
-      ${tick(p, "sensors", p.sensor, texts.sensor, texts.sensorHint, c)}
-      ${p.can_edit ? tick(p, "automations", p.automation, texts.automation, texts.automationHint, c) : nothing}
-    </div>
+    ${c.choices
+      ? html`<div class="choices">
+          ${tick(p, "sensors", p.sensor, texts.sensor, texts.sensorHint, c)}
+          ${p.can_edit ? tick(p, "automations", p.automation, texts.automation, texts.automationHint, c) : nothing}
+        </div>`
+      : nothing}
   </div>`;
 }

@@ -1,8 +1,10 @@
-"""Modbus TCP data coordinator for Adlar Heatpump."""
+"""Data coordinator for Adlar Heatpump: Modbus TCP, or the thermostat panel's ESPHome actions."""
 from __future__ import annotations
 
+import asyncio
 import inspect
 import logging
+import re
 import threading
 import time
 from collections import Counter
@@ -10,11 +12,15 @@ from datetime import timedelta
 
 from homeassistant.config_entries import ConfigEntry, ConfigEntryState
 from homeassistant.core import Context, HomeAssistant
-from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
+from homeassistant.exceptions import (
+    HomeAssistantError,
+    ServiceNotFound,
+    ServiceValidationError,
+)
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
-from .const import DOMAIN, EVENT_PARAMETER_WRITTEN
+from .const import CONF_TRANSPORT, DOMAIN, EVENT_PARAMETER_WRITTEN, TRANSPORT_PANEL
 from .param_info import param_step
 from .registers import (
     AC_CURRENT_REGISTER,
@@ -51,6 +57,19 @@ MIN_PROTOCOL_COILS = 130
 
 # All status/fault/relay registers, including the System 2-4 mirrors, in one read
 STATUS_BLOCK = range(0x0020)
+
+# Register counts the panel's own polls use: it refuses them for parameter reads, so a late
+# poll reply can't be taken for a parameter (and the other way round)
+RESERVED_COUNTS = {1, 8, 30}
+# Every register a panel read may touch: a block widened by a neighbour stays inside these
+KNOWN_REGISTERS = frozenset(r.addr for r in REGISTERS) | frozenset(STATUS_BLOCK)
+# Seconds for one panel action; the panel answers or gives up within 30
+PANEL_TIMEOUT = 35
+# The firmware's error codes, at the end of the message of the failed action
+_PANEL_ERROR = re.compile(
+    r"\b(busy|count|exception:\d+|no_reply|bad_length|not_sent|timeout|locked|pin|address"
+    r"|mismatch:\d+|try_again)\b"
+)
 
 
 def _to_signed(value: int) -> int:
@@ -96,6 +115,74 @@ class ModbusRejected(Exception):
         self.code = code
 
 
+class PanelTimeout(ModbusUnavailable):
+    """A panel action got no answer in time; a write may have gone out."""
+
+
+class PanelRefused(Exception):
+    """The panel refused an action; `reason` is its error code (busy, pin, mismatch:123, ...)."""
+
+    def __init__(self, reason: str) -> None:
+        super().__init__(reason)
+        self.reason = reason
+
+
+def panel_mode(entry: ConfigEntry) -> bool:
+    """Whether the entry reaches the heat pump through the thermostat panel."""
+    return entry.data.get(CONF_TRANSPORT) == TRANSPORT_PANEL
+
+
+class PanelTransport:
+    """The panel's ESPHome actions (read_parameters, write_parameter, check_pin), one call at a time."""
+
+    def __init__(self, hass: HomeAssistant, prefix: str, pin: str) -> None:
+        self.hass = hass
+        self.prefix = prefix
+        self.pin = pin
+        self._lock = asyncio.Lock()
+
+    async def call(self, action: str, **data) -> dict:
+        """Call one action and return its response.
+
+        Raises ModbusUnavailable when the panel can't be reached (PanelTimeout when it didn't
+        answer in time), ModbusRejected on a Modbus exception and PanelRefused otherwise.
+        """
+        service = f"{self.prefix}_{action}"
+        if not self.hass.services.has_service("esphome", service):
+            raise ModbusUnavailable(f"the panel has no action esphome.{service}")
+        async with self._lock:
+            try:
+                async with asyncio.timeout(PANEL_TIMEOUT):
+                    return await self.hass.services.async_call(
+                        "esphome", service, data, blocking=True, return_response=True
+                    )
+            except TimeoutError as err:
+                raise PanelTimeout(f"{service}: no answer in {PANEL_TIMEOUT} s") from err
+            except ServiceNotFound as err:
+                raise ModbusUnavailable(f"{service}: {err}") from err
+            except HomeAssistantError as err:
+                codes = _PANEL_ERROR.findall(str(err))
+                if not codes:
+                    raise ModbusUnavailable(f"{service}: {err}") from err
+                reason = codes[-1]
+                if reason == "timeout":
+                    raise PanelTimeout(f"{service}: the panel timed out") from err
+                if reason.startswith("exception:"):
+                    code = int(reason.split(":")[1])
+                    raise ModbusRejected(code, f"{service}: exception code {code}") from err
+                raise PanelRefused(reason) from err
+
+    async def read(self, start: int, count: int) -> list[int]:
+        try:
+            response = await self.call("read_parameters", start=start, count=count)
+        except PanelRefused as err:
+            raise ModbusRequestFailed(f"read 0x{start:04X} ({count}): {err.reason}") from err
+        values = list(response.get("values", []))
+        if len(values) != count:
+            raise ModbusRequestFailed(f"read 0x{start:04X}: {len(values)} registers instead of {count}")
+        return values
+
+
 class AdlarCoordinator(DataUpdateCoordinator):
     """Polls the heat pump in two tiers and decodes all registers.
 
@@ -113,12 +200,15 @@ class AdlarCoordinator(DataUpdateCoordinator):
         scan_interval: int,
         slow_interval: int,
         params: dict[str, str] | None = None,
+        panel: PanelTransport | None = None,
     ) -> None:
         self.host = host
         self.port = port
         self.slave = slave
         self.slow_interval = slow_interval
         self._client = None
+        # Set in panel mode: no polls, only the parameter panel reads and writes through it
+        self.panel = panel
         # Polls and writes run in different executor threads; one request at a time
         self._lock = threading.Lock()
         self._unit_kw: str | None = None
@@ -142,7 +232,7 @@ class AdlarCoordinator(DataUpdateCoordinator):
 
         super().__init__(
             hass, _LOGGER, name=DOMAIN, config_entry=entry,
-            update_interval=timedelta(seconds=scan_interval),
+            update_interval=timedelta(seconds=scan_interval) if scan_interval else None,
         )
 
     # ── Refrigerant ────────────────────────────────────────────────────
@@ -227,7 +317,44 @@ class AdlarCoordinator(DataUpdateCoordinator):
         self.reads.update(range(start, start + count))
         return list(result.registers)
 
-    def _read_blocks(self, blocks: list[tuple[int, int]], store: dict, kind: str, forget: bool) -> tuple[int, int]:
+    async def _aread(self, kind: str, start: int, count: int) -> list:
+        """One read over the entry's transport."""
+        if self.panel is None:
+            return await self.hass.async_add_executor_job(self._read, kind, start, count)
+        return await self._panel_read(start, count)
+
+    async def _panel_read(self, start: int, count: int) -> list[int]:
+        """Read start..start+count-1 through the panel, never asking for a reserved count.
+
+        Such a read is widened by a known neighbour and the extra word dropped; without one
+        a block is split in two halves.
+        """
+        if count not in RESERVED_COUNTS:
+            values = await self.panel.read(start, count)
+            self.reads.update(range(start, start + count))
+            return values
+        known = KNOWN_REGISTERS - self._unsupported
+        # A neighbour read before goes first: a rejection then points at the wanted registers
+        neighbours = sorted(
+            (a for a in (start + count, start - 1) if a in known), key=lambda a: not self.reads[a]
+        )
+        if not neighbours:
+            if count == 1:
+                raise ModbusRequestFailed(f"0x{start:04X}: no known neighbour to read it with")
+            half = count // 2
+            return await self._panel_read(start, half) + await self._panel_read(start + half, count - half)
+        neighbour = neighbours[0]
+        try:
+            values = await self._panel_read(min(start, neighbour), count + 1)
+        except ModbusRejected as err:
+            if self.reads[neighbour]:
+                raise
+            # ponytail: the neighbour may be the register the controller lacks, so nothing is
+            # learnt as unsupported; it is once the neighbour has been read on its own pair
+            raise ModbusRejected(None, f"{err} (read with 0x{neighbour:04X})") from err
+        return values[1:] if neighbour < start else values[:-1]
+
+    async def _read_blocks(self, blocks: list[tuple[int, int]], store: dict, kind: str, forget: bool) -> tuple[int, int]:
         """Read blocks into `store`; returns (requests answered, requests failed).
 
         A block the controller rejects is retried address by address; addresses rejected
@@ -239,7 +366,7 @@ class AdlarCoordinator(DataUpdateCoordinator):
             addrs = [a for a in range(start, start + count) if a not in self._unsupported]
             for sub_start, sub_count in plan_blocks(addrs):
                 try:
-                    values = self._read(kind, sub_start, sub_count)
+                    values = await self._aread(kind, sub_start, sub_count)
                 except ModbusRequestFailed as err:
                     _LOGGER.debug("Read failed: %s", err)
                     failed += 1
@@ -256,7 +383,7 @@ class AdlarCoordinator(DataUpdateCoordinator):
                     continue
                 for addr in range(sub_start, sub_start + sub_count):
                     try:
-                        store[addr] = self._read(kind, addr, 1)[0]
+                        store[addr] = (await self._aread(kind, addr, 1))[0]
                         ok += 1
                     except ModbusRejected as err:
                         if err.code == ILLEGAL_DATA_ADDRESS:
@@ -290,11 +417,11 @@ class AdlarCoordinator(DataUpdateCoordinator):
             value = round(value, 2)
         return value
 
-    def encode(self, reg: R, value: float) -> int:
+    def encode(self, reg: R, value: float, clamp: bool = True) -> int:
         """Clamp to the register's range and turn a display value into a raw word."""
-        if reg.min is not None:
+        if clamp and reg.min is not None:
             value = max(value, reg.min)
-        if reg.max is not None:
+        if clamp and reg.max is not None:
             value = min(value, reg.max)
         if reg.temp:
             raw = round(value / self.temperature_scale)
@@ -323,11 +450,12 @@ class AdlarCoordinator(DataUpdateCoordinator):
 
     async def _async_update_data(self) -> dict:
         try:
-            return await self.hass.async_add_executor_job(self._fetch_all)
+            return await self._fetch_all()
         except Exception as err:
             raise UpdateFailed(f"Error communicating with heatpump: {err}") from err
 
-    def _fetch_all(self) -> dict:
+    async def _fetch_all(self) -> dict:
+        """One poll; TCP only, panel mode doesn't poll."""
         now = time.monotonic()
         # Half a poll of slack: polls don't land exactly on the interval, and with equal
         # intervals a strict comparison would push the slow tier to every other poll
@@ -335,15 +463,15 @@ class AdlarCoordinator(DataUpdateCoordinator):
         if self._last_slow is None or now - self._last_slow >= self.slow_interval - slack:
             # Keep the previous values of a failed slow block (P119 in particular, which
             # sets the temperature scale) and retry the whole tier on the next poll
-            _, failed = self._read_blocks(self._slow_blocks, self._raw, "registers", forget=False)
+            _, failed = await self._read_blocks(self._slow_blocks, self._raw, "registers", forget=False)
             if not failed:
                 self._last_slow = now
-        ok, failed = self._read_blocks(self._fast_blocks, self._raw, "registers", forget=True)
+        ok, failed = await self._read_blocks(self._fast_blocks, self._raw, "registers", forget=True)
         if not ok:
             raise ModbusRequestFailed(f"no answer to any of {failed} requests")
         protocol = self._raw.get(PROTOCOL_VERSION_REGISTER)
         if protocol is None or protocol >= MIN_PROTOCOL_COILS:
-            self._read_blocks(self._coil_blocks, self._coils, "coils", forget=True)
+            await self._read_blocks(self._coil_blocks, self._coils, "coils", forget=True)
         return self._build_data()
 
     # ── Writing ────────────────────────────────────────────────────────
@@ -386,9 +514,8 @@ class AdlarCoordinator(DataUpdateCoordinator):
         """
         fresh: dict[int, int] = {}
         try:
-            _, failed = await self.hass.async_add_executor_job(
-                self._read_blocks, plan_blocks(addresses), fresh, "registers", False
-            )
+            await self._ensure_scale()
+            _, failed = await self._read_blocks(plan_blocks(addresses), fresh, "registers", False)
         except ModbusUnavailable as err:
             raise HomeAssistantError(f"Reading from the heat pump failed: {err}") from err
         self._raw.update(fresh)
@@ -396,6 +523,58 @@ class AdlarCoordinator(DataUpdateCoordinator):
         if failed:
             raise HomeAssistantError(f"The heat pump did not answer {failed} read request(s)")
         return fresh
+
+    async def _ensure_scale(self) -> None:
+        """Panel mode doesn't poll: read P119, which sets the temperature scale, before the
+        first parameter is decoded or encoded. Raises ModbusUnavailable or HomeAssistantError.
+        """
+        if self.panel is None or REFRIGERANT_REGISTER in self._raw:
+            return
+        read: dict[int, int] = {}
+        await self._read_blocks([(REFRIGERANT_REGISTER, 1)], read, "registers", False)
+        if REFRIGERANT_REGISTER not in read:
+            raise HomeAssistantError(
+                "Could not read P119 (refrigerant), which sets the temperature scale; try again"
+            )
+        self._raw.update(read)
+
+    async def _panel_write(
+        self, reg: R, raw: int, expected: float | None
+    ) -> tuple[int | None, int | None, bool]:
+        """Write through the panel; returns (before, after, confirmed).
+
+        Raises when nothing went out. Not confirmed: the panel got no echo (after is what it
+        read back, None when unknown), or no answer at all (before and after None).
+        """
+        if expected is None:
+            raise ServiceValidationError(f"{reg.name}: read the parameter before writing it")
+        try:
+            answer = await self.panel.call(
+                "write_parameter", reg=reg.addr, value=raw,
+                expected=self.encode(reg, expected, clamp=False), pin=self.panel.pin,
+            )
+        except PanelTimeout:
+            return None, None, False
+        except PanelRefused as err:
+            reason = err.reason
+            if reason == "pin":
+                self.config_entry.async_start_reauth(self.hass)
+            if reason.startswith("mismatch:"):
+                now = int(reason.split(":")[1])
+                now = now if reg.options is not None else self.decode(reg, now)
+                message = f"it changed on the heat pump (now {now:g}); read it again first"
+            else:
+                message = {
+                    "busy": "the panel is busy with another request; try again in a few seconds",
+                    "pin": "the panel refused the PIN; enter the new one where Home Assistant asks for it",
+                    "locked": "writes are locked for 15 minutes after 5 wrong PINs",
+                    "address": "the panel doesn't allow writing this register",
+                }.get(reason, f"the panel answered {reason}; nothing was written")
+            raise HomeAssistantError(f"{reg.name} not written: {message}") from err
+        except (ModbusUnavailable, ModbusRejected) as err:
+            raise HomeAssistantError(f"Writing {reg.name} failed: {err}") from err
+        after = answer["after"] if answer["after"] >= 0 else None
+        return answer["before"], after, bool(answer["echo"])
 
     def _write_param(self, address: int, raw: int) -> tuple[int, int | None]:
         """Read, write and read back one register; returns the raw word before and after.
@@ -414,7 +593,7 @@ class AdlarCoordinator(DataUpdateCoordinator):
             return old, None
 
     async def async_write_param(
-        self, reg: R, value: float, context: Context | None = None
+        self, reg: R, value: float, context: Context | None = None, expected: float | None = None
     ) -> float | int:
         """Write an installer parameter; returns the value read back.
 
@@ -423,6 +602,9 @@ class AdlarCoordinator(DataUpdateCoordinator):
         options is refused. The register is read before the write (the old value in the
         logbook) and after it; a read-back that differs from what was written, or that got
         no answer, is an error.
+
+        Panel mode: `expected` is the value the user saw; the panel writes only while the
+        heat pump still holds it. A write without a confirmation is logged, then an error.
         """
         if not can_edit(reg):
             raise ServiceValidationError(f"{reg.name} is read-only")
@@ -441,10 +623,19 @@ class AdlarCoordinator(DataUpdateCoordinator):
                 raise ServiceValidationError(
                     f"{reg.name}: {value:g} is not a multiple of {step:g}"
                 )
-        raw = self.encode(reg, value)
-        old_raw, new_raw = await self.hass.async_add_executor_job(
-            self._write_param, reg.addr, raw
-        )
+        confirmed = True
+        if self.panel is None:
+            raw = self.encode(reg, value)
+            old_raw, new_raw = await self.hass.async_add_executor_job(
+                self._write_param, reg.addr, raw
+            )
+        else:
+            try:
+                await self._ensure_scale()
+            except ModbusUnavailable as err:
+                raise HomeAssistantError(f"Writing {reg.name} failed: {err}") from err
+            raw = self.encode(reg, value)
+            old_raw, new_raw, confirmed = await self._panel_write(reg, raw, expected)
         if new_raw is not None:
             self._raw[reg.addr] = new_raw
             self._publish()
@@ -468,6 +659,11 @@ class AdlarCoordinator(DataUpdateCoordinator):
             },
             context=context,
         )
+        if not confirmed:
+            now = "unknown" if new is None else f"{new:g}"
+            raise HomeAssistantError(
+                f"{reg.name}: sent {value:g} without a confirmation; the heat pump now holds {now}"
+            )
         if new is None:
             raise HomeAssistantError(
                 f"{reg.name}: wrote {value:g}, but could not read it back"

@@ -10,7 +10,7 @@ from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.service import async_register_admin_service
 
 from .const import CONF_AUTOMATION_PARAMS, DOMAIN
-from .coordinator import loaded_coordinator
+from .coordinator import loaded_coordinator, panel_mode
 from .param_info import find_param
 from .registers import param_key
 
@@ -42,6 +42,11 @@ def async_register(hass: HomeAssistant) -> None:
         )
         if entry is None:
             raise ServiceValidationError(f"{call.data[ATTR_DEVICE_ID]} is not an Adlar heat pump")
+        if panel_mode(entry):
+            raise ServiceValidationError(
+                "This heat pump is reached through the thermostat panel: its parameters are "
+                "written only from the Heat pump parameters panel"
+            )
         reg = find_param(call.data[ATTR_PARAMETER])
         if reg is None:
             raise ServiceValidationError(f"Unknown parameter {call.data[ATTR_PARAMETER]}")

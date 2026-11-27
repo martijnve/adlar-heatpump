@@ -23,3 +23,15 @@ EVENT_PARAMETER_WRITTEN = f"{DOMAIN}_parameter_written"
 CONF_EXPERT_MODE = "expert_mode"
 
 DEVICE_NAME = "Adlar Aurora II Heatpump"
+
+# How the entry reaches the heat pump: Modbus TCP (version 1 entries), or the thermostat
+# panel's ESPHome actions (version 2 entries: no polling and no entities, the parameter
+# panel only)
+CONF_TRANSPORT = "transport"
+TRANSPORT_TCP = "tcp"
+TRANSPORT_PANEL = "panel"
+# The panel's action prefix: its actions are esphome.<prefix>_read_parameters etc.
+CONF_PREFIX = "prefix"
+DEFAULT_PREFIX = "living_room_thermostat"
+# The PIN the panel asks for every write
+CONF_PIN = "pin"

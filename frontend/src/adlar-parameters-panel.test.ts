@@ -41,6 +41,7 @@ function panel(over: Partial<ListResult> = {}) {
     recommended: [],
     pump_manual: false,
     baseline_set_at: null,
+    mode: "tcp",
     ...over,
   };
   return element;
@@ -99,4 +100,28 @@ it("offers Apply only while a choice differs from what is stored", () => {
   expect(shown).toContain(texts.apply);
   element._staged = { sensors: new Set(), automations: new Set() };
   expect(text(element.render())).not.toContain(texts.apply);
+});
+
+it("shows no sensor or automation choices through the thermostat panel", () => {
+  const element = panel({ mode: "panel" });
+  element._open = new Set(["water"]);
+  const shown = text(element.render());
+  expect(shown).toContain("P99");
+  expect(shown).toContain(texts.edit);
+  expect(shown).not.toContain(texts.sensor);
+  expect(shown).not.toContain(texts.automation);
+  expect(shown).not.toContain(texts.recommended);
+});
+
+it("sends the value the confirm dialog showed as expected", async () => {
+  const element = panel();
+  const sent: Record<string, unknown>[] = [];
+  element.hass = {
+    callWS: async <T,>(msg: Record<string, unknown>) => {
+      sent.push(msg);
+      return { value: 7, values: {} } as T;
+    },
+  };
+  await (element as unknown as { _write(p: Parameter, value: number): Promise<void> })._write(parameter, 7);
+  expect(sent[0]).toMatchObject({ type: "adlar_heatpump/write", key: "0163", value: 7, expected: 6 });
 });

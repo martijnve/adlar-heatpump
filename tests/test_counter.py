@@ -84,11 +84,11 @@ async def test_drop_right_after_reload_is_held(hass, fake_client):
     assert hass.states.get(_entity_id(hass)).state == "2985"
 
 
-def test_reply_with_wrong_register_count_is_a_failed_read(hass, fake_client):
+async def test_reply_with_wrong_register_count_is_a_failed_read(hass, fake_client):
     entry = MockConfigEntry(domain=DOMAIN, data={"host": "192.0.2.1"})
     entry.add_to_hass(hass)
     coordinator = AdlarCoordinator(hass, entry, "192.0.2.1", 502, 1, 60, 600)
-    coordinator._fetch_all()
+    await coordinator._fetch_all()
     client = FakeModbusClient.instances[-1]
     real = client.read_holding_registers
 
@@ -99,5 +99,5 @@ def test_reply_with_wrong_register_count_is_a_failed_read(hass, fake_client):
 
     client.read_holding_registers = short
     with pytest.raises(ModbusRequestFailed):
-        coordinator._read("registers", KWH - 1, 2)
+        await hass.async_add_executor_job(coordinator._read, "registers", KWH - 1, 2)
     assert coordinator._client is None

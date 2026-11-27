@@ -208,7 +208,8 @@ export class AdlarParametersPanel extends LitElement {
     this._writing = p.key;
     let failed = false;
     try {
-      const result = await this._call<{ value: number }>("write", { key: p.key, value });
+      // `expected`: the value the confirm dialog showed; in panel mode only that one is overwritten
+      const result = await this._call<{ value: number }>("write", { key: p.key, value, expected: p.value });
       this._data = { ...this._data!, groups: withValues(this._data!.groups, { [p.key]: result.value }) };
       this._result = { key: p.key, ok: true, text: texts.written(formatValue(p, result.value)) };
     } catch (err) {
@@ -384,8 +385,10 @@ export class AdlarParametersPanel extends LitElement {
     const views = filterGroups(data.groups, this._query, this._differing);
     const filtered = this._query.trim() !== "" || this._differing;
     const canRead = entry.loaded && this._busy === null;
+    const choices = data.mode !== "panel";
     const context: RowContext = {
       idle: this._busy === null && this._writing === null && this._edit === null,
+      choices,
       staged,
       edit: this._edit,
       writing: this._writing,
@@ -416,9 +419,11 @@ export class AdlarParametersPanel extends LitElement {
             @change=${(ev: Event) => this._filter({ _differing: (ev.target as HTMLInputElement).checked })}
           />${texts.differing}
         </label>
-        <button class="btn" title=${texts.recommendedHint} ?disabled=${this._busy !== null} @click=${this._recommend}>
-          ${texts.recommended}
-        </button>
+        ${choices
+          ? html`<button class="btn" title=${texts.recommendedHint} ?disabled=${this._busy !== null} @click=${this._recommend}>
+              ${texts.recommended}
+            </button>`
+          : nothing}
         <button class="btn" ?disabled=${!canRead} @click=${this._export}>${texts.export}</button>
       </div>
       <div class="toolbar">

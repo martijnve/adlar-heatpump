@@ -21,6 +21,8 @@ adlar_heatpump/list
         pump_manual      true while DC pump control is not on Auto; null when unknown
         baseline_set_at  ISO timestamp of the last set_baseline; null while the baseline
                          is the defaults of the HHI reference
+        mode             "tcp" or "panel" (through the thermostat panel: no sensors, no
+                         automations, writes need `expected`); null when there is no entry
     parameter:
         key          "0163"
         code         "P99", "L13"; null for the DC pump pair
@@ -44,7 +46,8 @@ adlar_heatpump/read_group
     Result: {values: {key: value}}
 
 adlar_heatpump/write
-    Request: `entry_id`, `key`, `value`.
+    Request: `entry_id`, `key`, `value`, `expected` (optional: the value the user saw; in
+    panel mode required, and the panel writes only while the heat pump still holds it).
     Writes one parameter and reads it back. Refused, with nothing sent to the heat pump:
     a parameter that is not `can_edit`, a value outside min..max, off the step grid or not
     one of the options. A read-back that differs from the value written is an error that
@@ -57,6 +60,7 @@ adlar_heatpump/set_choices
     Stores which parameters are sensors and which the service may write. Only `can_edit`
     parameters may be in `automations`. A change reloads the entry: the answer comes when
     the reload is done, and values of parameters without a sensor are gone until read again.
+    Refused in panel mode.
     Result: null
 
 adlar_heatpump/export
@@ -85,7 +89,7 @@ from homeassistant.helpers.storage import Store
 from homeassistant.util import dt as dt_util
 
 from .const import CONF_AUTOMATION_PARAMS, CONF_PARAMS, DOMAIN
-from .coordinator import AdlarCoordinator, loaded_coordinator
+from .coordinator import AdlarCoordinator, loaded_coordinator, panel_mode
 from .param_info import (
     DC_PUMP_CONTROL_REGISTER,
     DESCRIPTIONS,
@@ -156,6 +160,7 @@ async def ws_list(
         "recommended": list(recommended_params()),
         "pump_manual": None,
         "baseline_set_at": None,
+        "mode": None,
     }
     entry = _entry(hass, msg["entry_id"]) if "entry_id" in msg else next(iter(entries), None)
     if entry is None:
@@ -209,6 +214,7 @@ async def ws_list(
         ],
         "pump_manual": None if pump is None else pump != 0,
         "baseline_set_at": stored["set_at"] if stored else None,
+        "mode": "panel" if panel_mode(entry) else "tcp",
     }
     connection.send_result(msg["id"], result)
 
@@ -235,6 +241,7 @@ async def ws_read_group(
         **ENTRY_ID,
         vol.Required("key"): str,
         vol.Required("value"): vol.Coerce(float),
+        vol.Optional("expected"): vol.Any(None, vol.Coerce(float)),
     }
 )
 @websocket_api.require_admin
@@ -247,7 +254,9 @@ async def ws_write(
     reg = PARAMS.get(msg["key"])
     if reg is None:
         raise HomeAssistantError(f"Unknown parameter {msg['key']}")
-    value = await coordinator.async_write_param(reg, msg["value"], connection.context(msg))
+    value = await coordinator.async_write_param(
+        reg, msg["value"], connection.context(msg), msg.get("expected")
+    )
     connection.send_result(msg["id"], {"value": value})
 
 
@@ -266,6 +275,10 @@ async def ws_set_choices(
 ) -> None:
     """Store which parameters are sensors and which automations may write."""
     entry = _entry(hass, msg["entry_id"])
+    if panel_mode(entry):
+        raise HomeAssistantError(
+            "Through the thermostat panel there are no parameter sensors or automation writes"
+        )
     sensors, automations = set(msg["sensors"]), set(msg["automations"])
     if unknown := (sensors | automations) - PARAMS.keys():
         raise HomeAssistantError(f"Unknown parameters: {', '.join(sorted(unknown))}")

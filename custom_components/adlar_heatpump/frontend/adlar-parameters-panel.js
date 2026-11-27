@@ -703,10 +703,10 @@ function Pe(e, t) {
       ${Z(e) ? P`<div class="baseline">${K.baseline(Y(e, e.baseline))} <span class="pill">${K.differs}</span></div>` : I}
       ${t.result?.key === e.key ? P`<div class="result ${t.result.ok ? "ok" : "error"}" role="status">${t.result.text}</div>` : I}
     </div>
-    <div class="choices">
-      ${Ne(e, "sensors", e.sensor, K.sensor, K.sensorHint, t)}
-      ${e.can_edit ? Ne(e, "automations", e.automation, K.automation, K.automationHint, t) : I}
-    </div>
+    ${t.choices ? P`<div class="choices">
+          ${Ne(e, "sensors", e.sensor, K.sensor, K.sensorHint, t)}
+          ${e.can_edit ? Ne(e, "automations", e.automation, K.automation, K.automationHint, t) : I}
+        </div>` : I}
   </div>`;
 }
 //#endregion
@@ -1228,7 +1228,8 @@ var Le = class extends G {
 		try {
 			let n = await this._call("write", {
 				key: e.key,
-				value: t
+				value: t,
+				expected: e.value
 			});
 			this._data = {
 				...this._data,
@@ -1374,8 +1375,9 @@ var Le = class extends G {
 	_body(e, t) {
 		let n = this._entry;
 		if (!n) return P`<div class="note">${K.noEntries}</div>`;
-		let r = xe(e.groups, this._query, this._differing), i = this._query.trim() !== "" || this._differing, a = n.loaded && this._busy === null, o = {
+		let r = xe(e.groups, this._query, this._differing), i = this._query.trim() !== "" || this._differing, a = n.loaded && this._busy === null, o = e.mode !== "panel", s = {
 			idle: this._busy === null && this._writing === null && this._edit === null,
+			choices: o,
 			staged: t,
 			edit: this._edit,
 			writing: this._writing,
@@ -1409,9 +1411,9 @@ var Le = class extends G {
             @change=${(e) => this._filter({ _differing: e.target.checked })}
           />${K.differing}
         </label>
-        <button class="btn" title=${K.recommendedHint} ?disabled=${this._busy !== null} @click=${this._recommend}>
-          ${K.recommended}
-        </button>
+        ${o ? P`<button class="btn" title=${K.recommendedHint} ?disabled=${this._busy !== null} @click=${this._recommend}>
+              ${K.recommended}
+            </button>` : I}
         <button class="btn" ?disabled=${!a} @click=${this._export}>${K.export}</button>
       </div>
       <div class="toolbar">
@@ -1423,7 +1425,7 @@ var Le = class extends G {
         </span>
         <button class="btn" ?disabled=${!a} @click=${this._askBaseline}>${K.setBaseline}</button>
       </div>
-      ${r.length ? r.map((e) => this._group(e, o, i, n.loaded)) : P`<div class="note">${K.noMatches}</div>`}`;
+      ${r.length ? r.map((e) => this._group(e, s, i, n.loaded)) : P`<div class="note">${K.noMatches}</div>`}`;
 	}
 	_group(e, t, n, r) {
 		let { group: i, rows: a } = e, o = this._open.has(i.id), s = this._reads[i.id] ?? {};

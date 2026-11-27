@@ -53,6 +53,8 @@ export interface ListResult {
   recommended: string[];
   pump_manual: boolean | null;
   baseline_set_at: string | null;
+  /** "panel": reached through the thermostat panel, without sensors or automation writes. */
+  mode: "tcp" | "panel" | null;
 }
 
 export interface ExportedParameter {
